@@ -2,9 +2,9 @@ import { google, type calendar_v3 } from "googleapis";
 import { env } from "../config.js";
 
 const oauth2Client = new google.auth.OAuth2(
-  env.GOOGLE_CLIENT_ID,
-  env.GOOGLE_CLIENT_SECRET,
-  env.GOOGLE_REDIRECT_URI,
+  env.GOOGLE_CLIENT_ID ?? "",
+  env.GOOGLE_CLIENT_SECRET ?? "",
+  env.GOOGLE_REDIRECT_URI ?? "",
 );
 
 export function getAuthUrl(userId: string): string {
