@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { meetings, proposedSlots, participants, meetingTypes } from "../db/schema.js";
+import { meetings, proposedSlots, participants, meetingTypes, users } from "../db/schema.js";
 import { MeetingStatus } from "../types/index.js";
 import * as gcal from "../lib/google.js";
 
@@ -37,7 +37,7 @@ export async function proposeTimes(
   organizerTokens: { access_token?: string | null; refresh_token?: string | null },
   meetingTitle: string,
   description?: string,
-  options?: { addGoogleMeet?: boolean; location?: string },
+  options?: { addGoogleMeet?: boolean; location?: string; timeZone?: string },
 ): Promise<{ slots: typeof proposedSlots.$inferSelect[]; meetLink?: string }> {
   return await db.transaction(async (tx) => {
     // Lock the meeting row
@@ -68,6 +68,7 @@ export async function proposeTimes(
         description,
         addGoogleMeet: options?.addGoogleMeet,
         location: options?.location,
+        timeZone: options?.timeZone,
       });
 
       if (result.meetLink && !meetLink) {
@@ -144,16 +145,29 @@ export async function confirmSlot(
       description += (description ? "\n\n" : "") + "Agenda:\n" + agenda.map((a) => `- ${a}`).join("\n");
     }
 
-    // Check if this is a video call meeting type (needs Google Meet)
+    // Check meeting type for video call flag and default location
     let isVideoCall = false;
+    let location = meeting.location ?? undefined;
     if (meeting.meetingTypeId) {
       const mType = await tx.query.meetingTypes.findFirst({
         where: eq(meetingTypes.id, meeting.meetingTypeId),
       });
-      if (mType && mType.isOnline && mType.slug === "video_call") {
-        isVideoCall = true;
+      if (mType) {
+        if (mType.isOnline && mType.slug === "video_call") {
+          isVideoCall = true;
+        }
+        // Fall back to meeting type's default location if meeting has none
+        if (!location && mType.defaultLocation) {
+          location = mType.defaultLocation;
+        }
       }
     }
+
+    // Get organizer timezone
+    const organizer = await tx.query.users.findFirst({
+      where: eq(users.id, meeting.organizerId),
+    });
+    const tz = organizer?.timezone ?? "America/New_York";
 
     // Confirm the selected slot's calendar event
     const eventIds = selectedSlot.tentativeEventIds as Record<string, string>;
@@ -163,8 +177,9 @@ export async function confirmSlot(
         eventIds.primary,
         attendeeEmails,
         description || undefined,
-        meeting.location ?? undefined,
+        location,
         isVideoCall,
+        tz,
       );
     }
 

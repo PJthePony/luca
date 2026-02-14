@@ -77,6 +77,7 @@ export async function createTentativeEvent(
     description?: string;
     addGoogleMeet?: boolean;
     location?: string;
+    timeZone?: string;
   },
 ): Promise<{ eventId: string; meetLink?: string }> {
   const calendar = getCalendarClient(tokens);
@@ -85,8 +86,8 @@ export async function createTentativeEvent(
     summary: event.summary,
     description: event.description,
     status: "tentative",
-    start: { dateTime: event.start.toISOString() },
-    end: { dateTime: event.end.toISOString() },
+    start: { dateTime: event.start.toISOString(), timeZone: event.timeZone ?? "America/New_York" },
+    end: { dateTime: event.end.toISOString(), timeZone: event.timeZone ?? "America/New_York" },
     attendees: event.attendees?.map((email) => ({ email })),
     transparency: "opaque",
   };
@@ -125,6 +126,7 @@ export async function confirmEvent(
   description?: string,
   location?: string,
   addGoogleMeet?: boolean,
+  timeZone?: string,
 ): Promise<{ meetLink?: string }> {
   const calendar = getCalendarClient(tokens);
 
@@ -136,10 +138,15 @@ export async function confirmEvent(
 
   const summary = (existing.data.summary ?? "").replace(/^\[Tentative\]\s*/, "");
 
+  const tz = timeZone ?? "America/New_York";
+
   const patchBody: Record<string, unknown> = {
     status: "confirmed",
     summary,
     attendees: attendees?.map((email) => ({ email })),
+    // Re-set start/end with explicit timeZone to avoid timezone drift
+    start: { ...existing.data.start, timeZone: tz },
+    end: { ...existing.data.end, timeZone: tz },
   };
 
   // Use provided description, or preserve existing one

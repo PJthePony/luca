@@ -221,18 +221,53 @@ webhookRoutes.post("/inbound", async (c) => {
           if (!parsed.meeting_details.duration_minutes) {
             effectiveDuration = matchedType.defaultDuration;
           }
-          // Store the meeting type on the meeting
+
+          // Build meeting title: "Lunch: P.J./Nicole"
+          const participantNames = allParticipants
+            .filter((p) => p.role !== "organizer")
+            .map((p) => {
+              if (p.name) return p.name.split(/\s+/)[0]; // first name
+              return p.email.split("@")[0]; // fallback to email prefix
+            });
+          const meetingTitle = `${matchedType.name}: ${organizer.name.split(/\s+/)[0]}/${participantNames.join("/")}`;
+
+          // Store the meeting type, title, and location on the meeting
+          const meetingUpdate: Record<string, unknown> = {
+            meetingTypeId: matchedType.id,
+            durationMin: effectiveDuration,
+            title: meetingTitle,
+            updatedAt: new Date(),
+          };
+          // Save the default location onto the meeting so it's available at confirmation
+          if (matchedType.defaultLocation) {
+            meetingUpdate.location = matchedType.defaultLocation;
+          }
           await db
             .update(meetings)
-            .set({
-              meetingTypeId: matchedType.id,
-              durationMin: effectiveDuration,
-              updatedAt: new Date(),
-            })
+            .set(meetingUpdate)
             .where(eq(meetings.id, meeting.id));
 
-          console.log(`Resolved meeting type: ${matchedType.name} (${matchedType.slug}), duration: ${effectiveDuration}min`);
+          // Re-read the meeting to get the updated title
+          meeting.title = meetingTitle;
+
+          console.log(`Resolved meeting type: ${matchedType.name} (${matchedType.slug}), duration: ${effectiveDuration}min, title: ${meetingTitle}`);
         }
+      }
+
+      // Build a fallback title if none was set by meeting type
+      if (!meeting.title) {
+        const participantNames = allParticipants
+          .filter((p) => p.role !== "organizer")
+          .map((p) => {
+            if (p.name) return p.name.split(/\s+/)[0];
+            return p.email.split("@")[0];
+          });
+        const fallbackTitle = `Meeting: ${organizer.name.split(/\s+/)[0]}/${participantNames.join("/")}`;
+        meeting.title = fallbackTitle;
+        await db
+          .update(meetings)
+          .set({ title: fallbackTitle, updatedAt: new Date() })
+          .where(eq(meetings.id, meeting.id));
       }
 
       // Find available slots (pass meetingTypeId for time window filtering)
@@ -279,6 +314,7 @@ webhookRoutes.post("/inbound", async (c) => {
         {
           addGoogleMeet: isVideoCall,
           location: resolvedType?.defaultLocation ?? undefined,
+          timeZone: tz,
         },
       );
       const proposedSlotRecords = proposeResult.slots;
@@ -410,7 +446,7 @@ webhookRoutes.post("/inbound", async (c) => {
           tokens,
           meeting.title ?? email.subject,
           calendarDescription,
-          { addGoogleMeet: reschedIsVideoCall },
+          { addGoogleMeet: reschedIsVideoCall, timeZone: tz },
         );
 
         const timeList = reschedResult.slots
@@ -490,7 +526,7 @@ webhookRoutes.post("/inbound", async (c) => {
           tokens,
           meeting.title ?? email.subject,
           calendarDescription,
-          { addGoogleMeet: altIsVideoCall },
+          { addGoogleMeet: altIsVideoCall, timeZone: tz },
         );
 
         const timeList = altResult.slots
