@@ -12,6 +12,7 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
+  GOOGLE_MAPS_API_KEY: z.string().min(1).optional(),
   IMESSAGE_GATEWAY_URL: z.string().url().optional(),
   PORT: z.coerce.number().default(3000),
   APP_URL: z.string().url().default("http://localhost:3000"),

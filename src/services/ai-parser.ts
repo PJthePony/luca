@@ -59,9 +59,10 @@ export async function parseInboundEmail(
     const slots = await db.query.proposedSlots.findMany({
       where: eq(proposedSlots.meetingId, meetingId),
     });
+    const tzOpt = { timeZone: organizer.timezone || "America/New_York" };
     proposedTimes = slots.map(
       (s) =>
-        `${s.startTime.toLocaleDateString()} ${s.startTime.toLocaleTimeString()} - ${s.endTime.toLocaleTimeString()}`,
+        `${s.startTime.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", ...tzOpt })} at ${s.startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", ...tzOpt })} - ${s.endTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", ...tzOpt })}`,
     );
   }
 
@@ -83,12 +84,17 @@ export async function parseInboundEmail(
     .map((r) => `${days[r.dayOfWeek]}: ${r.startTime} - ${r.endTime}`)
     .join(", ");
 
+  // Get existing agenda items for context
+  const existingAgenda = (meeting?.agenda as string[]) ?? [];
+
   return parseEmail(emailBody, senderEmail, senderName, subject, {
     organizerName: organizer.name,
     organizerEmail: organizer.email,
+    organizerTimezone: organizer.timezone,
     meetingStatus: meeting?.status,
     proposedTimes,
     threadHistory: threadHistory || undefined,
     availabilityPreferences: availabilityPreferences || undefined,
+    existingAgenda: existingAgenda.length > 0 ? existingAgenda : undefined,
   });
 }

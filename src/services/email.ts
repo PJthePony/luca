@@ -76,7 +76,7 @@ export async function sendThreadedReply(
   await db
     .update(emailThreads)
     .set({
-      messageIds: sql`array_append(${emailThreads.messageIds}, ${normalizedId})`,
+      messageIds: sql`array_append(${emailThreads.messageIds}, ${normalizedId}::text)`,
       lastMessageId: normalizedId,
       bccMoved: true,
       updatedAt: new Date(),

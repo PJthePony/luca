@@ -49,6 +49,78 @@ export const availabilityRules = pgTable(
   (table) => [index("idx_availability_rules_user").on(table.userId)],
 );
 
+// ── User Calendars ──────────────────────────────────────────────────────────
+
+export const userCalendars = pgTable(
+  "user_calendars",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    calendarId: text("calendar_id").notNull(), // Google Calendar ID (email or hash)
+    summary: text("summary").notNull(), // Display name
+    isPrimary: boolean("is_primary").notNull().default(false),
+    checkForConflicts: boolean("check_for_conflicts").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_user_calendars_user_calendar").on(table.userId, table.calendarId),
+    index("idx_user_calendars_user").on(table.userId),
+  ],
+);
+
+// ── Meeting Types ───────────────────────────────────────────────────────────
+
+export const meetingTypes = pgTable(
+  "meeting_types",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(), // coffee, video_call, lunch, quick_chat, phone_call, other
+    isOnline: boolean("is_online").notNull().default(true),
+    defaultDuration: integer("default_duration").notNull().default(30), // minutes
+    defaultLocation: text("default_location"),
+    earliestTime: time("earliest_time"), // e.g. "07:00" — null means no constraint
+    latestTime: time("latest_time"), // e.g. "11:00" — null means no constraint
+    isDefault: boolean("is_default").notNull().default(false), // default meeting type for this user
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_meeting_types_user").on(table.userId),
+    uniqueIndex("idx_meeting_types_user_slug").on(table.userId, table.slug),
+  ],
+);
+
+// ── Meeting Locations ───────────────────────────────────────────────────────
+
+export const meetingLocations = pgTable(
+  "meeting_locations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    meetingTypeId: uuid("meeting_type_id")
+      .notNull()
+      .references(() => meetingTypes.id),
+    name: text("name").notNull(), // e.g. "Blue Bottle Coffee"
+    address: text("address"),
+    notes: text("notes"), // e.g. "On the 2nd floor"
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_meeting_locations_type").on(table.meetingTypeId),
+  ],
+);
+
 // ── Meetings ─────────────────────────────────────────────────────────────────
 
 export const meetings = pgTable(
@@ -62,8 +134,11 @@ export const meetings = pgTable(
     title: text("title"),
     status: text("status").notNull().default("draft"),
     durationMin: integer("duration_min").notNull().default(30),
+    meetingTypeId: uuid("meeting_type_id").references(() => meetingTypes.id),
     location: text("location"),
+    confirmedLocationId: uuid("confirmed_location_id").references(() => meetingLocations.id),
     notes: text("notes"),
+    agenda: text("agenda").array().notNull().default([]),
     confirmedStart: timestamp("confirmed_start", { withTimezone: true }),
     confirmedEnd: timestamp("confirmed_end", { withTimezone: true }),
     googleEventId: text("google_event_id"),

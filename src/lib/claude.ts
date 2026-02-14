@@ -44,13 +44,27 @@ const PARSE_EMAIL_TOOL: Anthropic.Tool = {
               enum: ["prefer", "avoid", "available", "unavailable"],
             },
             description: { type: "string" },
-            start: { type: "string", description: "ISO 8601 datetime" },
-            end: { type: "string", description: "ISO 8601 datetime" },
+            start: {
+              type: "string",
+              description:
+                "ISO 8601 datetime with timezone offset. REQUIRED when a specific day/time is mentioned.",
+            },
+            end: {
+              type: "string",
+              description:
+                "ISO 8601 datetime with timezone offset. REQUIRED when a specific day/time is mentioned.",
+            },
             recurrence: { type: "string" },
+            dayOfWeek: {
+              type: "number",
+              description:
+                "Day of week (0=Sunday, 1=Monday, ..., 6=Saturday). Set this whenever a weekday name is mentioned, even without a specific date.",
+            },
           },
           required: ["type", "description"],
         },
-        description: "Time constraints extracted from natural language",
+        description:
+          "Time constraints extracted from natural language. ALWAYS include ISO 8601 start/end when a specific day or time is mentioned.",
       },
       meeting_details: {
         type: "object",
@@ -59,6 +73,20 @@ const PARSE_EMAIL_TOOL: Anthropic.Tool = {
           duration_minutes: { type: "number" },
           location: { type: "string" },
           notes: { type: "string" },
+          meeting_type: {
+            type: "string",
+            enum: [
+              "coffee",
+              "video_call",
+              "lunch",
+              "quick_chat",
+              "phone_call",
+              "drinks",
+              "other",
+            ],
+            description:
+              "Inferred type of meeting from context. coffee/tea/cafe → coffee, zoom/meet/video → video_call, lunch/dinner/brunch → lunch, quick chat/brief → quick_chat, call/phone → phone_call, drinks/happy hour/beer/wine/cocktails/bar → drinks, unclear → other.",
+          },
         },
       },
       participants: {
@@ -71,6 +99,17 @@ const PARSE_EMAIL_TOOL: Anthropic.Tool = {
         description:
           "A natural, friendly draft email response for Luca to send",
       },
+      meeting_context_summary: {
+        type: "string",
+        description:
+          "A 1-3 sentence summary of what this meeting is about, based on the email content and thread history. This will be added to the calendar event description.",
+      },
+      agenda_items: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Specific topics, questions, or discussion items mentioned in the email. Extract these whenever the sender mentions things to discuss, cover, or talk about.",
+      },
     },
     required: ["intent", "response_draft"],
   },
@@ -79,10 +118,12 @@ const PARSE_EMAIL_TOOL: Anthropic.Tool = {
 interface ParseContext {
   organizerName: string;
   organizerEmail: string;
+  organizerTimezone?: string;
   meetingStatus?: string;
   proposedTimes?: string[];
   threadHistory?: string;
   availabilityPreferences?: string;
+  existingAgenda?: string[];
 }
 
 export async function parseEmail(
@@ -92,17 +133,53 @@ export async function parseEmail(
   subject: string,
   context: ParseContext,
 ): Promise<ParsedEmail> {
-  const systemPrompt = `You are Luca, a friendly AI scheduling assistant. Your job is to parse incoming emails about meeting scheduling and extract structured data.
+  const tz = context.organizerTimezone ?? "America/New_York";
+  const nowLocal = new Date().toLocaleString("en-US", {
+    timeZone: tz,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 
-About the meeting:
-- Organizer: ${context.organizerName} (${context.organizerEmail})
-- Current meeting status: ${context.meetingStatus ?? "new request"}
-${context.proposedTimes?.length ? `- Previously proposed times: ${context.proposedTimes.join(", ")}` : ""}
-${context.availabilityPreferences ? `- Organizer's availability preferences: ${context.availabilityPreferences}` : ""}
+  const systemPrompt = `You are Luca, a friendly AI scheduling assistant. You help schedule meetings by email. When people CC you into an email thread, you find available times and coordinate.
+
+IMPORTANT — who's who:
+- ORGANIZER (your boss, whose calendar you manage): ${context.organizerName} (${context.organizerEmail})
+- This email is from: ${senderName || senderEmail} <${senderEmail}>
+${senderEmail === context.organizerEmail ? `- The sender IS the organizer. They are asking you to help schedule a meeting with the other people on this thread.` : `- The sender is a PARTICIPANT/GUEST, not the organizer.`}
+- Meeting status: ${context.meetingStatus ?? "new request"}
+- Organizer's timezone: ${tz}
+- Current date/time in ${tz}: ${nowLocal}
+${context.proposedTimes?.length ? `- Previously proposed times:\n${context.proposedTimes.map((t, i) => `  ${i + 1}. ${t}`).join("\n")}` : ""}
+${context.availabilityPreferences ? `- ${context.organizerName}'s availability preferences: ${context.availabilityPreferences}` : ""}
+${context.existingAgenda?.length ? `- Current agenda items:\n${context.existingAgenda.map((a) => `  - ${a}`).join("\n")}` : ""}
 
 ${context.threadHistory ? `Previous messages in this thread:\n${context.threadHistory}` : ""}
 
-Parse the email below and use the parse_scheduling_email tool to return structured data. Your response_draft should be warm, concise, and professional. Sign off as "Luca".`;
+Instructions:
+- Parse the email and use the parse_scheduling_email tool.
+- Your response_draft is the email Luca will send as a REPLY to the thread. It goes to the other participants (not the organizer, who is silently BCC'd).
+- Address the participants, not the organizer.
+- Do NOT sign off — the system appends "- Luca" automatically.
+
+TIME PREFERENCE EXTRACTION (critical):
+- When the sender mentions specific days or times (e.g., "Tuesday afternoon", "next Thursday morning", "after 2pm"), you MUST resolve them to concrete ISO 8601 date ranges using the organizer's timezone (${tz}).
+- Example: "Tuesday afternoon" with current date ${nowLocal} → find next Tuesday, set start to 12:00 and end to 17:00 in ${tz}.
+- Example: "next week" → set start to next Monday 00:00 and end to next Friday 23:59 in ${tz}.
+- ALWAYS set the dayOfWeek field (0=Sunday through 6=Saturday) when a weekday name is mentioned.
+- If no specific dates/times can be determined, still set the description field with the natural language.
+
+MEETING TYPE INFERENCE:
+- Infer the meeting type from context clues: coffee/tea/cafe → coffee, zoom/meet/video/call → video_call, lunch/dinner/brunch → lunch, quick chat/5 minutes/brief → quick_chat, call/phone → phone_call, drinks/happy hour/beer/wine/cocktails/bar → drinks.
+- If duration is not explicitly stated, do NOT set duration_minutes — the system uses the meeting type's default.
+
+MEETING CONTEXT & AGENDA:
+- Always set meeting_context_summary: a 1-3 sentence summary of what this meeting is about.
+- Extract agenda_items when the sender mentions topics, questions, or things to discuss.
+- If the sender is adding to an existing agenda (replying with "let's also discuss X"), extract those new items.`;
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-5-20250929",
@@ -137,5 +214,9 @@ Parse the email below and use the parse_scheduling_email tool to return structur
       (input.meeting_details as ParsedEmail["meeting_details"]) ?? {},
     participants: (input.participants as ParsedEmail["participants"]) ?? [],
     response_draft: input.response_draft as string,
+    meeting_context_summary: input.meeting_context_summary as
+      | string
+      | undefined,
+    agenda_items: (input.agenda_items as string[]) ?? [],
   };
 }

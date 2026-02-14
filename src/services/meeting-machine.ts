@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { meetings, proposedSlots, participants } from "../db/schema.js";
+import { meetings, proposedSlots, participants, meetingTypes } from "../db/schema.js";
 import { MeetingStatus } from "../types/index.js";
 import * as gcal from "../lib/google.js";
 
@@ -36,7 +36,9 @@ export async function proposeTimes(
   slots: { start: Date; end: Date }[],
   organizerTokens: { access_token?: string | null; refresh_token?: string | null },
   meetingTitle: string,
-): Promise<typeof proposedSlots.$inferSelect[]> {
+  description?: string,
+  options?: { addGoogleMeet?: boolean; location?: string },
+): Promise<{ slots: typeof proposedSlots.$inferSelect[]; meetLink?: string }> {
   return await db.transaction(async (tx) => {
     // Lock the meeting row
     const [meeting] = await tx
@@ -56,13 +58,21 @@ export async function proposeTimes(
 
     // Create tentative calendar holds
     const createdSlots: (typeof proposedSlots.$inferSelect)[] = [];
+    let meetLink: string | undefined;
 
     for (const slot of slots) {
-      const eventId = await gcal.createTentativeEvent(organizerTokens, {
+      const result = await gcal.createTentativeEvent(organizerTokens, {
         summary: `[Tentative] ${meetingTitle}`,
         start: slot.start,
         end: slot.end,
+        description,
+        addGoogleMeet: options?.addGoogleMeet,
+        location: options?.location,
       });
+
+      if (result.meetLink && !meetLink) {
+        meetLink = result.meetLink;
+      }
 
       const [created] = await tx
         .insert(proposedSlots)
@@ -70,7 +80,7 @@ export async function proposeTimes(
           meetingId,
           startTime: slot.start,
           endTime: slot.end,
-          tentativeEventIds: { primary: eventId },
+          tentativeEventIds: { primary: result.eventId },
         })
         .returning();
 
@@ -83,7 +93,7 @@ export async function proposeTimes(
       .set({ status: MeetingStatus.PROPOSED, updatedAt: new Date() })
       .where(eq(meetings.id, meetingId));
 
-    return createdSlots;
+    return { slots: createdSlots, meetLink };
   });
 }
 
@@ -120,10 +130,42 @@ export async function confirmSlot(
       throw new Error(`Slot ${slotId} not found for meeting ${meetingId}`);
     }
 
+    // Get attendee emails for the calendar invite
+    const meetingParticipants = await tx
+      .select()
+      .from(participants)
+      .where(eq(participants.meetingId, meetingId));
+    const attendeeEmails = meetingParticipants.map((p) => p.email);
+
+    // Build description from meeting context + agenda
+    let description = meeting.notes ?? "";
+    const agenda = (meeting.agenda as string[]) ?? [];
+    if (agenda.length > 0) {
+      description += (description ? "\n\n" : "") + "Agenda:\n" + agenda.map((a) => `- ${a}`).join("\n");
+    }
+
+    // Check if this is a video call meeting type (needs Google Meet)
+    let isVideoCall = false;
+    if (meeting.meetingTypeId) {
+      const mType = await tx.query.meetingTypes.findFirst({
+        where: eq(meetingTypes.id, meeting.meetingTypeId),
+      });
+      if (mType && mType.isOnline && mType.slug === "video_call") {
+        isVideoCall = true;
+      }
+    }
+
     // Confirm the selected slot's calendar event
     const eventIds = selectedSlot.tentativeEventIds as Record<string, string>;
     if (eventIds?.primary) {
-      await gcal.confirmEvent(organizerTokens, eventIds.primary);
+      await gcal.confirmEvent(
+        organizerTokens,
+        eventIds.primary,
+        attendeeEmails,
+        description || undefined,
+        meeting.location ?? undefined,
+        isVideoCall,
+      );
     }
 
     // Delete unselected tentative events
@@ -132,9 +174,10 @@ export async function confirmSlot(
       const ids = slot.tentativeEventIds as Record<string, string>;
       if (ids?.primary) {
         try {
+          console.log(`Deleting tentative event ${ids.primary} for unselected slot`);
           await gcal.deleteEvent(organizerTokens, ids.primary);
-        } catch {
-          // Event may have already been deleted
+        } catch (err) {
+          console.warn(`Failed to delete tentative event ${ids.primary}:`, err);
         }
       }
     }

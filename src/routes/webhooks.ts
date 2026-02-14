@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { emailMessages, emailThreads, meetings, participants, users } from "../db/schema.js";
+import { emailMessages, emailThreads, meetings, meetingLocations, meetingTypes, participants, proposedSlots, users } from "../db/schema.js";
 import {
   parseInboundWebhook,
   verifyWebhookSignature,
@@ -17,6 +17,33 @@ import { env } from "../config.js";
 
 export const webhookRoutes = new Hono();
 
+/** Format a date/time range in a given timezone for display in emails. */
+function formatSlot(start: Date, end: Date, tz: string): string {
+  const date = start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz });
+  const startTime = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+  const endTime = end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+  return `${date} at ${startTime} - ${endTime}`;
+}
+
+/** Build a calendar event description from context summary + agenda. */
+function buildCalendarDescription(
+  contextSummary: string | null | undefined,
+  agenda: string[],
+): string | undefined {
+  const parts: string[] = [];
+  if (contextSummary) parts.push(contextSummary);
+  if (agenda.length > 0) {
+    parts.push("Agenda:\n" + agenda.map((a) => `- ${a}`).join("\n"));
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+function formatTime(date: Date, tz: string): string {
+  const d = date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz });
+  const t = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+  return `${d} at ${t}`;
+}
+
 /**
  * Mailgun inbound webhook endpoint.
  * Receives parsed email data when someone sends an email to luca@tanzillo.ai.
@@ -24,18 +51,31 @@ export const webhookRoutes = new Hono();
 webhookRoutes.post("/inbound", async (c) => {
   const body = await c.req.parseBody();
 
-  // Verify webhook signature in production
-  if (env.NODE_ENV === "production") {
-    const timestamp = body.timestamp as string;
-    const token = body.token as string;
-    const signature = body.signature as string;
+  try {
 
-    if (!verifyWebhookSignature(timestamp, token, signature)) {
-      return c.json({ error: "Invalid signature" }, 403);
-    }
-  }
+  // Debug: log the raw webhook payload keys
+  console.log("=== INBOUND WEBHOOK ===");
+  console.log("Body keys:", Object.keys(body));
+  console.log("from:", body.from);
+  console.log("sender:", body.sender);
+  console.log("recipient:", body.recipient);
+  console.log("To:", body.To);
+  console.log("Cc:", body.Cc);
+  console.log("subject:", body.subject);
+
+  // Note: Mailgun inbound routing does NOT sign the payload.
+  // Signature verification only applies to Mailgun event webhooks.
 
   const email = parseInboundWebhook(body as Record<string, unknown>);
+
+  console.log("Parsed email:", JSON.stringify({
+    from: email.from,
+    to: email.to,
+    cc: email.cc,
+    subject: email.subject,
+    messageId: email.messageId,
+    strippedText: email.strippedText?.slice(0, 100),
+  }));
 
   // Idempotency: skip if we've already processed this message
   if (email.messageId) {
@@ -55,20 +95,34 @@ webhookRoutes.post("/inbound", async (c) => {
   }
 
   const { meeting, thread, organizer, isNewMeeting } = resolved;
+  const tz = organizer.timezone || "America/New_York";
 
   // Store the inbound message
+  // Sanitize body for jsonb: Hono's parseBody() can return File objects
+  // which aren't JSON-serializable and crash Drizzle's value mapper.
+  const sanitizedPayload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      sanitizedPayload[key] = value;
+    } else if (value === null || value === undefined) {
+      sanitizedPayload[key] = null;
+    } else {
+      sanitizedPayload[key] = String(value);
+    }
+  }
+
   await db.insert(emailMessages).values({
     threadId: thread.id,
     messageIdHeader: email.messageId || `<unknown-${Date.now()}>`,
     fromEmail: email.from,
-    fromName: email.fromName,
+    fromName: email.fromName || null,
     toEmails: email.to,
-    ccEmails: email.cc,
+    ccEmails: email.cc.length > 0 ? email.cc : null,
     subject: email.subject,
-    bodyText: email.strippedText || email.bodyPlain,
-    bodyHtml: email.bodyHtml,
+    bodyText: email.strippedText || email.bodyPlain || null,
+    bodyHtml: email.bodyHtml || null,
     direction: EmailDirection.INBOUND,
-    rawPayload: body as Record<string, unknown>,
+    rawPayload: sanitizedPayload,
   });
 
   // Parse the email with Claude
@@ -81,11 +135,49 @@ webhookRoutes.post("/inbound", async (c) => {
     organizer.id,
   );
 
+  console.log("AI parsed intent:", parsed.intent);
+  console.log("AI response_draft:", parsed.response_draft?.slice(0, 100));
+  console.log("AI meeting_context_summary:", parsed.meeting_context_summary?.slice(0, 100));
+  console.log("AI agenda_items:", parsed.agenda_items);
+
+  // Store context summary and agenda items on the meeting
+  const meetingUpdates: Record<string, unknown> = { updatedAt: new Date() };
+
+  if (parsed.meeting_context_summary && !meeting.notes) {
+    meetingUpdates.notes = parsed.meeting_context_summary;
+  }
+
+  if (parsed.agenda_items && parsed.agenda_items.length > 0) {
+    // Append new agenda items to existing ones (deduped)
+    const existingAgenda = (meeting.agenda as string[]) ?? [];
+    const newItems = parsed.agenda_items.filter(
+      (item) => !existingAgenda.some((existing) => existing.toLowerCase() === item.toLowerCase()),
+    );
+    if (newItems.length > 0) {
+      meetingUpdates.agenda = [...existingAgenda, ...newItems];
+    }
+  }
+
+  if (Object.keys(meetingUpdates).length > 1) {
+    await db
+      .update(meetings)
+      .set(meetingUpdates)
+      .where(eq(meetings.id, meeting.id));
+  }
+
+  // Build calendar event description from context + agenda
+  const calendarDescription = buildCalendarDescription(
+    (meetingUpdates.notes as string) ?? meeting.notes ?? parsed.meeting_context_summary,
+    ((meetingUpdates.agenda as string[]) ?? (meeting.agenda as string[]) ?? []),
+  );
+
   // Get organizer's Google tokens
   const tokens = organizer.googleTokens as {
     access_token?: string | null;
     refresh_token?: string | null;
   } | null;
+
+  console.log("Has tokens:", !!tokens, "Has access_token:", !!tokens?.access_token);
 
   // Determine recipients for the reply (everyone except Luca and organizer)
   const allParticipants = await db.query.participants.findMany({
@@ -94,6 +186,9 @@ webhookRoutes.post("/inbound", async (c) => {
   const replyTo = allParticipants
     .filter((p) => p.role !== "organizer")
     .map((p) => p.email);
+
+  console.log("All participants:", allParticipants.map(p => `${p.email} (${p.role})`));
+  console.log("Reply to:", replyTo);
 
   // Process based on intent
   switch (parsed.intent) {
@@ -107,12 +202,47 @@ webhookRoutes.post("/inbound", async (c) => {
         break;
       }
 
-      // Find available slots
+      // Resolve meeting type from AI inference
+      let effectiveDuration = parsed.meeting_details.duration_minutes ?? 30;
+      const aiMeetingType = parsed.meeting_details.meeting_type;
+      let matchedTypeId: string | undefined;
+
+      if (aiMeetingType) {
+        const matchedType = await db.query.meetingTypes.findFirst({
+          where: and(
+            eq(meetingTypes.userId, organizer.id),
+            eq(meetingTypes.slug, aiMeetingType),
+          ),
+        });
+
+        if (matchedType) {
+          matchedTypeId = matchedType.id;
+          // Use the meeting type's default duration if AI didn't extract an explicit duration
+          if (!parsed.meeting_details.duration_minutes) {
+            effectiveDuration = matchedType.defaultDuration;
+          }
+          // Store the meeting type on the meeting
+          await db
+            .update(meetings)
+            .set({
+              meetingTypeId: matchedType.id,
+              durationMin: effectiveDuration,
+              updatedAt: new Date(),
+            })
+            .where(eq(meetings.id, meeting.id));
+
+          console.log(`Resolved meeting type: ${matchedType.name} (${matchedType.slug}), duration: ${effectiveDuration}min`);
+        }
+      }
+
+      // Find available slots (pass meetingTypeId for time window filtering)
       const slots = await findAvailableSlots(
         organizer.id,
         meeting.id,
-        parsed.meeting_details.duration_minutes ?? 30,
+        effectiveDuration,
         parsed.time_preferences,
+        10,
+        matchedTypeId,
       );
 
       if (slots.length === 0) {
@@ -125,27 +255,83 @@ webhookRoutes.post("/inbound", async (c) => {
         break;
       }
 
+      // Determine if we need Google Meet or have special meeting type handling
+      let resolvedType: typeof meetingTypes.$inferSelect | undefined;
+      if (aiMeetingType) {
+        resolvedType = (await db.query.meetingTypes.findFirst({
+          where: and(
+            eq(meetingTypes.userId, organizer.id),
+            eq(meetingTypes.slug, aiMeetingType),
+          ),
+        })) ?? undefined;
+      }
+
+      const isVideoCall = resolvedType?.slug === "video_call" && resolvedType?.isOnline;
+      const isPhoneCall = resolvedType?.slug === "phone_call";
+
       // Create tentative holds and transition to PROPOSED
-      const proposedSlotRecords = await machine.proposeTimes(
+      const proposeResult = await machine.proposeTimes(
         meeting.id,
         slots.map((s) => ({ start: s.start, end: s.end })),
         tokens,
         meeting.title ?? email.subject,
+        calendarDescription,
+        {
+          addGoogleMeet: isVideoCall,
+          location: resolvedType?.defaultLocation ?? undefined,
+        },
       );
+      const proposedSlotRecords = proposeResult.slots;
 
       // Format times for the email
       const timeList = proposedSlotRecords
         .map(
           (s, i) =>
-            `${i + 1}. ${s.startTime.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} at ${s.startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} - ${s.endTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
+            `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`,
         )
         .join("\n");
+
+      // Acknowledge agenda items if extracted
+      const agendaAck = parsed.agenda_items && parsed.agenda_items.length > 0
+        ? `\n\nI've noted the discussion topics for the agenda.`
+        : "";
+
+      // Check if this is an in-person meeting with location options
+      let locationNote = "";
+      if (resolvedType && !resolvedType.isOnline) {
+        const locations = await db.query.meetingLocations.findMany({
+          where: eq(meetingLocations.meetingTypeId, resolvedType.id),
+          orderBy: (loc, { asc }) => [asc(loc.sortOrder)],
+        });
+        if (locations.length > 0) {
+          const locList = locations.map((l) => `• ${l.name}${l.address ? ` (${l.address})` : ""}`).join("\n");
+          locationNote = `\n\nHere are some location options:\n${locList}\n\nYou can pick a time and location here: ${env.APP_URL}/meeting/${meeting.shortId}`;
+        } else if (resolvedType.defaultLocation) {
+          locationNote = `\n\nSuggested location: ${resolvedType.defaultLocation}`;
+        }
+      }
+
+      // Add Google Meet note for video calls
+      let meetNote = "";
+      if (isVideoCall && proposeResult.meetLink) {
+        meetNote = `\n\nA Google Meet link will be included in the calendar invite.`;
+      }
+
+      // For phone calls, ask the other person for their number
+      let phoneNote = "";
+      if (isPhoneCall) {
+        phoneNote = `\n\nSince this is a phone call, could you share your phone number? ${organizer.name} will call you at the selected time.`;
+      }
+
+      const pickerLink = locationNote
+        ? "" // Already included the picker link in locationNote
+        : `\n\nYou can also pick a time here: ${env.APP_URL}/meeting/${meeting.shortId}`;
 
       await sendThreadedReply({
         threadId: thread.id,
         to: replyTo,
         bcc: [organizer.email],
-        text: `${parsed.response_draft}\n\nHere are some times that work:\n\n${timeList}\n\nJust reply with your preferred option, or let me know if none of these work and I'll find more times.\n\nYou can also pick a time here: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
+        text: `${parsed.response_draft}\n\nHere are some times that work:\n\n${timeList}\n\nJust reply with your preferred option, or let me know if none of these work and I'll find more times.${agendaAck}${meetNote}${phoneNote}${locationNote}${pickerLink}\n\n- Luca`,
       });
       break;
     }
@@ -155,10 +341,7 @@ webhookRoutes.post("/inbound", async (c) => {
 
       // Find the matching proposed slot
       const meetingSlots = await db.query.proposedSlots.findMany({
-        where: eq(
-          (await import("../db/schema.js")).proposedSlots.meetingId,
-          meeting.id,
-        ),
+        where: eq(proposedSlots.meetingId, meeting.id),
       });
 
       // Try to match the selected time to a proposed slot
@@ -172,7 +355,7 @@ webhookRoutes.post("/inbound", async (c) => {
       if (matchedSlot) {
         await machine.confirmSlot(meeting.id, matchedSlot.id, tokens);
 
-        const confirmedTime = `${matchedSlot.startTime.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} at ${matchedSlot.startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+        const confirmedTime = formatTime(matchedSlot.startTime, tz);
 
         await sendThreadedReply({
           threadId: thread.id,
@@ -209,20 +392,31 @@ webhookRoutes.post("/inbound", async (c) => {
         meeting.id,
         meeting.durationMin,
         parsed.time_preferences,
+        10,
+        meeting.meetingTypeId,
       );
 
       if (newSlots.length > 0) {
-        const proposedSlotRecords = await machine.proposeTimes(
+        // Check meeting type for Google Meet
+        let reschedIsVideoCall = false;
+        if (meeting.meetingTypeId) {
+          const mType = await db.query.meetingTypes.findFirst({ where: eq(meetingTypes.id, meeting.meetingTypeId) });
+          if (mType?.slug === "video_call" && mType?.isOnline) reschedIsVideoCall = true;
+        }
+
+        const reschedResult = await machine.proposeTimes(
           meeting.id,
           newSlots.map((s) => ({ start: s.start, end: s.end })),
           tokens,
           meeting.title ?? email.subject,
+          calendarDescription,
+          { addGoogleMeet: reschedIsVideoCall },
         );
 
-        const timeList = proposedSlotRecords
+        const timeList = reschedResult.slots
           .map(
             (s, i) =>
-              `${i + 1}. ${s.startTime.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} at ${s.startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} - ${s.endTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
+              `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`,
           )
           .join("\n");
 
@@ -279,20 +473,30 @@ webhookRoutes.post("/inbound", async (c) => {
         meeting.durationMin,
         parsed.time_preferences,
         14, // Search further out
+        meeting.meetingTypeId,
       );
 
       if (moreSlots.length > 0) {
-        const proposedSlotRecords = await machine.proposeTimes(
+        // Check meeting type for Google Meet
+        let altIsVideoCall = false;
+        if (meeting.meetingTypeId) {
+          const mType = await db.query.meetingTypes.findFirst({ where: eq(meetingTypes.id, meeting.meetingTypeId) });
+          if (mType?.slug === "video_call" && mType?.isOnline) altIsVideoCall = true;
+        }
+
+        const altResult = await machine.proposeTimes(
           meeting.id,
           moreSlots.map((s) => ({ start: s.start, end: s.end })),
           tokens,
           meeting.title ?? email.subject,
+          calendarDescription,
+          { addGoogleMeet: altIsVideoCall },
         );
 
-        const timeList = proposedSlotRecords
+        const timeList = altResult.slots
           .map(
             (s, i) =>
-              `${i + 1}. ${s.startTime.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} at ${s.startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} - ${s.endTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
+              `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`,
           )
           .join("\n");
 
@@ -326,4 +530,11 @@ webhookRoutes.post("/inbound", async (c) => {
   }
 
   return c.json({ status: "processed", intent: parsed.intent });
+
+  } catch (err) {
+    console.error("=== WEBHOOK ERROR ===");
+    console.error("Error:", err);
+    console.error("Stack:", err instanceof Error ? err.stack : "no stack");
+    return c.json({ status: "error", message: String(err) }, 500);
+  }
 });

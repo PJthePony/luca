@@ -21,6 +21,10 @@ export interface SendEmailOptions {
 }
 
 export async function sendEmail(options: SendEmailOptions): Promise<string> {
+  if (!options.to || options.to.length === 0) {
+    throw new Error(`sendEmail called with empty 'to' array. Subject: ${options.subject}`);
+  }
+
   const messageData: Record<string, unknown> = {
     from: options.from ?? `Luca <luca@${env.MAILGUN_DOMAIN}>`,
     to: options.to,
@@ -39,7 +43,15 @@ export async function sendEmail(options: SendEmailOptions): Promise<string> {
     }
   }
 
+  console.log("Sending email via Mailgun:", JSON.stringify({
+    to: messageData.to,
+    bcc: messageData.bcc,
+    subject: messageData.subject,
+    domain: env.MAILGUN_DOMAIN,
+  }));
+
   const result = await mg.messages.create(env.MAILGUN_DOMAIN, messageData as any);
+  console.log("Mailgun send result:", JSON.stringify(result));
   return result.id ?? "";
 }
 
@@ -98,7 +110,7 @@ export function parseInboundWebhook(body: Record<string, unknown>): InboundEmail
   return {
     from: (body.sender as string) ?? "",
     fromName,
-    to: parseAddressList(body.recipient ?? body.To),
+    to: parseAddressList(body.To),
     cc: parseAddressList(body.Cc),
     subject: (body.subject as string) ?? "",
     strippedText: (body["stripped-text"] as string) ?? "",

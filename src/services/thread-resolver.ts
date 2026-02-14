@@ -39,7 +39,7 @@ export async function resolveThread(
       await db
         .update(emailThreads)
         .set({
-          messageIds: sql`array_append(${emailThreads.messageIds}, ${email.messageId})`,
+          messageIds: sql`array_append(${emailThreads.messageIds}, ${email.messageId}::text)`,
           lastMessageId: email.messageId,
           updatedAt: new Date(),
         })
@@ -186,7 +186,7 @@ async function findThreadByMessageIds(
   messageIds: string[],
 ): Promise<typeof emailThreads.$inferSelect | null> {
   const thread = await db.query.emailThreads.findFirst({
-    where: sql`${emailThreads.messageIds} && ${messageIds}`,
+    where: sql`${emailThreads.messageIds} && ${sql`ARRAY[${sql.join(messageIds.map(id => sql`${id}`), sql`, `)}]::text[]`}`,
   });
   return thread ?? null;
 }

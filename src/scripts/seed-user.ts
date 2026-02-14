@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { db } from "../db/index.js";
-import { users, availabilityRules } from "../db/schema.js";
+import { users, availabilityRules, meetingTypes } from "../db/schema.js";
 
 async function seed() {
   const email = process.argv[2];
@@ -36,8 +36,22 @@ async function seed() {
     });
   }
 
+  // Seed default meeting types
+  const defaultTypes = [
+    { name: "Coffee", slug: "coffee", isOnline: false, defaultDuration: 60, isDefault: false },
+    { name: "Video Call", slug: "video_call", isOnline: true, defaultDuration: 30, isDefault: true },
+    { name: "Lunch", slug: "lunch", isOnline: false, defaultDuration: 60, isDefault: false },
+    { name: "Quick Chat", slug: "quick_chat", isOnline: true, defaultDuration: 15, isDefault: false },
+    { name: "Phone Call", slug: "phone_call", isOnline: true, defaultDuration: 30, isDefault: false },
+  ];
+
+  for (const mt of defaultTypes) {
+    await db.insert(meetingTypes).values({ userId: user.id, ...mt });
+  }
+
   console.log(`Created user: ${user.name} (${user.email})`);
   console.log(`ID: ${user.id}`);
+  console.log(`Seeded 5 default meeting types`);
   console.log(`Connect Google Calendar: /auth/google?userId=${user.id}`);
   process.exit(0);
 }

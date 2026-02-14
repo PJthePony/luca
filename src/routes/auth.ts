@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { users } from "../db/schema.js";
-import { getAuthUrl, exchangeCode } from "../lib/google.js";
+import { users, userCalendars } from "../db/schema.js";
+import { getAuthUrl, exchangeCode, listCalendars } from "../lib/google.js";
 
 export const authRoutes = new Hono();
 
@@ -37,6 +37,38 @@ authRoutes.get("/google/callback", async (c) => {
     .update(users)
     .set({ googleTokens: tokens, updatedAt: new Date() })
     .where(eq(users.id, userId));
+
+  // Auto-sync all user calendars (all enabled for conflict checking by default)
+  try {
+    const calendars = await listCalendars(tokens as {
+      access_token?: string | null;
+      refresh_token?: string | null;
+    });
+
+    for (const cal of calendars) {
+      await db
+        .insert(userCalendars)
+        .values({
+          userId,
+          calendarId: cal.calendarId,
+          summary: cal.summary,
+          isPrimary: cal.isPrimary,
+          checkForConflicts: true,
+        })
+        .onConflictDoUpdate({
+          target: [userCalendars.userId, userCalendars.calendarId],
+          set: {
+            summary: cal.summary,
+            isPrimary: cal.isPrimary,
+          },
+        });
+    }
+
+    console.log(`Synced ${calendars.length} calendars for user ${userId}`);
+  } catch (err) {
+    console.warn("Failed to sync calendars:", err);
+    // Non-fatal: user can still use Luca with primary calendar only
+  }
 
   return c.html(`
     <html>
