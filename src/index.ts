@@ -9,6 +9,7 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { meetingRoutes } from "./routes/meetings.js";
 import { authRoutes } from "./routes/auth.js";
 import { settingsRoutes } from "./routes/settings.js";
+import { joinRoutes } from "./routes/join.js";
 
 const app = new Hono();
 
@@ -143,6 +144,8 @@ app.get("/", async (c) => {
         <p>The other person picks a time, and Luca sends the calendar invite</p>
       </div>
     </div>
+    <a href="/join" style="display:inline-block;padding:12px 28px;background:#4f46e5;color:white;border-radius:8px;font-size:15px;font-weight:600;text-decoration:none;margin-bottom:16px;">Get Started</a>
+    <br>
     <div class="email-badge">luca@tanzillo.ai</div>
   </div>
 </body>
@@ -152,6 +155,7 @@ app.get("/", async (c) => {
 app.route("/webhooks", webhookRoutes);
 app.route("/meeting", meetingRoutes);
 app.route("/auth", authRoutes);
+app.route("/join", joinRoutes);
 app.route("/settings", settingsRoutes);
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {

@@ -70,14 +70,7 @@ authRoutes.get("/google/callback", async (c) => {
     // Non-fatal: user can still use Luca with primary calendar only
   }
 
-  return c.html(`
-    <html>
-    <body style="font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh;">
-      <div style="text-align: center;">
-        <h1>Connected!</h1>
-        <p>Your Google Calendar is now linked to Luca. You can close this window.</p>
-      </div>
-    </body>
-    </html>
-  `);
+  // Set the user cookie and redirect to settings
+  c.header("Set-Cookie", `luca_user=${userId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`);
+  return c.redirect(`/settings/${userId}`);
 });
