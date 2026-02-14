@@ -26,6 +26,9 @@ settingsRoutes.get("/:userId", async (c) => {
     return c.html("<h1>User not found</h1>", 404);
   }
 
+  // Set cookie so root "/" can redirect back here
+  c.header("Set-Cookie", `luca_user=${userId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`);
+
   const calendars = await db.query.userCalendars.findMany({
     where: eq(userCalendars.userId, userId),
   });
