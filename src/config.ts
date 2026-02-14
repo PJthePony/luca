@@ -3,7 +3,7 @@ dotenv.config({ override: true });
 import { z } from "zod";
 
 const envSchema = z.object({
-  DATABASE_URL: z.string().url(),
+  DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().url().optional(),
   MAILGUN_API_KEY: z.string().min(1),
   MAILGUN_DOMAIN: z.string().min(1),
