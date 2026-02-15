@@ -1,16 +1,12 @@
-import { jwtVerify } from "jose";
-import { env } from "../config.js";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
-const secret = new Uint8Array(Buffer.from(env.SUPABASE_JWT_SECRET, "base64"));
+const SUPABASE_URL = "https://jlkognkltdkzerzpcqpu.supabase.co";
+const JWKS = createRemoteJWKSet(
+  new URL(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
+);
 
 export async function verifySupabaseJwt(token: string) {
-  // Log the JWT header to debug algorithm issues
-  try {
-    const header = JSON.parse(Buffer.from(token.split(".")[0], "base64url").toString());
-    console.log("JWT header:", header);
-  } catch {}
-
-  const { payload } = await jwtVerify(token, secret);
+  const { payload } = await jwtVerify(token, JWKS);
   return {
     sub: payload.sub as string,
     email: payload.email as string,
