@@ -19,6 +19,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
   timezone: text("timezone").notNull().default("America/New_York"),
+  supabaseId: text("supabase_id"),
   googleTokens: jsonb("google_tokens"),
   imessageId: text("imessage_id"),
   createdAt: timestamp("created_at", { withTimezone: true })

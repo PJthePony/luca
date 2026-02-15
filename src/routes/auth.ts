@@ -3,8 +3,151 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, userCalendars } from "../db/schema.js";
 import { getAuthUrl, exchangeCode, listCalendars } from "../lib/google.js";
+import { verifySupabaseJwt, parseCookie } from "../lib/supabase-jwt.js";
+import { seedDefaults } from "../lib/seed-defaults.js";
 
 export const authRoutes = new Hono();
+
+const COOKIE_OPTS = "Domain=.tanzillo.ai; Path=/; HttpOnly; Secure; SameSite=Lax";
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+
+// ── Supabase Session Exchange ───────────────────────────────────────────────
+
+/**
+ * Set shared auth cookies from a Supabase session.
+ * GET /auth/session?token=<jwt>&refresh=<rt>&returnTo=<url>
+ *
+ * Called by Nexbite after magic-link login to sync the session to .tanzillo.ai cookies.
+ */
+authRoutes.get("/session", async (c) => {
+  const token = c.req.query("token");
+  const refreshToken = c.req.query("refresh");
+  const returnTo = c.req.query("returnTo") || "https://tasks.tanzillo.ai";
+
+  if (!token) {
+    return c.text("Missing token parameter", 400);
+  }
+
+  try {
+    const payload = await verifySupabaseJwt(token);
+
+    // Find or create Luca user by email
+    let user = await db.query.users.findFirst({
+      where: eq(users.email, payload.email),
+    });
+
+    if (!user) {
+      const name =
+        (payload.userMetadata?.full_name as string) ||
+        (payload.userMetadata?.name as string) ||
+        payload.email.split("@")[0];
+
+      const [newUser] = await db
+        .insert(users)
+        .values({
+          email: payload.email,
+          name,
+          timezone: "America/New_York",
+          supabaseId: payload.sub,
+        })
+        .returning();
+      user = newUser;
+
+      await seedDefaults(user.id);
+      console.log(`Auto-created Luca user from Supabase: ${user.name} (${user.email})`);
+    } else if (!user.supabaseId) {
+      // Backfill supabaseId for existing users
+      await db
+        .update(users)
+        .set({ supabaseId: payload.sub, updatedAt: new Date() })
+        .where(eq(users.id, user.id));
+    }
+  } catch {
+    return c.text("Invalid token", 401);
+  }
+
+  // Set cookies on .tanzillo.ai domain
+  c.header(
+    "Set-Cookie",
+    `sb_access_token=${token}; ${COOKIE_OPTS}; Max-Age=${COOKIE_MAX_AGE}`,
+    { append: true },
+  );
+  if (refreshToken) {
+    c.header(
+      "Set-Cookie",
+      `sb_refresh_token=${refreshToken}; ${COOKIE_OPTS}; Max-Age=${COOKIE_MAX_AGE}`,
+      { append: true },
+    );
+  }
+
+  return c.redirect(returnTo);
+});
+
+/**
+ * Silently refresh the shared auth cookies.
+ * POST /auth/session/refresh { token, refresh }
+ *
+ * Called by Nexbite on TOKEN_REFRESHED events via fetch with credentials.
+ */
+authRoutes.options("/session/refresh", (c) => {
+  c.header("Access-Control-Allow-Origin", "https://tasks.tanzillo.ai");
+  c.header("Access-Control-Allow-Credentials", "true");
+  c.header("Access-Control-Allow-Methods", "POST");
+  c.header("Access-Control-Allow-Headers", "Content-Type");
+  return c.body(null, 204);
+});
+
+authRoutes.post("/session/refresh", async (c) => {
+  c.header("Access-Control-Allow-Origin", "https://tasks.tanzillo.ai");
+  c.header("Access-Control-Allow-Credentials", "true");
+
+  const { token, refresh } = await c.req.json<{ token: string; refresh: string }>();
+
+  if (!token) {
+    return c.json({ error: "Missing token" }, 400);
+  }
+
+  try {
+    await verifySupabaseJwt(token);
+  } catch {
+    return c.json({ error: "Invalid token" }, 401);
+  }
+
+  c.header(
+    "Set-Cookie",
+    `sb_access_token=${token}; ${COOKIE_OPTS}; Max-Age=${COOKIE_MAX_AGE}`,
+    { append: true },
+  );
+  if (refresh) {
+    c.header(
+      "Set-Cookie",
+      `sb_refresh_token=${refresh}; ${COOKIE_OPTS}; Max-Age=${COOKIE_MAX_AGE}`,
+      { append: true },
+    );
+  }
+
+  return c.json({ ok: true });
+});
+
+/**
+ * Clear shared auth cookies.
+ * GET /auth/logout?returnTo=<url>
+ */
+authRoutes.get("/logout", (c) => {
+  const returnTo = c.req.query("returnTo") || "https://tasks.tanzillo.ai/login";
+  const clearOpts = `${COOKIE_OPTS}; Max-Age=0`;
+
+  c.header("Set-Cookie", `sb_access_token=; ${clearOpts}`, { append: true });
+  c.header("Set-Cookie", `sb_refresh_token=; ${clearOpts}`, { append: true });
+  // Also clear legacy cookie
+  c.header("Set-Cookie", `luca_user=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`, {
+    append: true,
+  });
+
+  return c.redirect(returnTo);
+});
+
+// ── Google OAuth ────────────────────────────────────────────────────────────
 
 /**
  * Start Google OAuth flow.
@@ -67,10 +210,7 @@ authRoutes.get("/google/callback", async (c) => {
     console.log(`Synced ${calendars.length} calendars for user ${userId}`);
   } catch (err) {
     console.warn("Failed to sync calendars:", err);
-    // Non-fatal: user can still use Luca with primary calendar only
   }
 
-  // Set the user cookie and redirect to settings
-  c.header("Set-Cookie", `luca_user=${userId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`);
-  return c.redirect(`/settings/${userId}`);
+  return c.redirect("/settings");
 });

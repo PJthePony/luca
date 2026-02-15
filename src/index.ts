@@ -1,10 +1,11 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
-import { eq } from "drizzle-orm";
 import { env } from "./config.js";
 import { db } from "./db/index.js";
 import { users } from "./db/schema.js";
+import { eq } from "drizzle-orm";
+import { verifySupabaseJwt, parseCookie } from "./lib/supabase-jwt.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { meetingRoutes } from "./routes/meetings.js";
 import { authRoutes } from "./routes/auth.js";
@@ -18,22 +19,34 @@ app.use(logger());
 
 app.get("/health", (c) => c.json({ status: "ok" }));
 
-// Root route: redirect to settings if userId cookie is set, otherwise show landing
+// Root route: redirect to settings if authenticated, otherwise show landing
 app.get("/", async (c) => {
-  // Check for userId cookie
-  const userId = c.req.header("cookie")
-    ?.split(";")
-    .map((s) => s.trim())
-    .find((s) => s.startsWith("luca_user="))
-    ?.split("=")[1];
+  const cookieHeader = c.req.header("cookie");
 
-  if (userId) {
-    // Verify user exists
+  // Check Supabase session cookie
+  const token = parseCookie(cookieHeader, "sb_access_token");
+  if (token) {
+    try {
+      const payload = await verifySupabaseJwt(token);
+      const user = await db.query.users.findFirst({
+        where: eq(users.email, payload.email),
+      });
+      if (user) {
+        return c.redirect("/settings");
+      }
+    } catch {
+      // Token invalid — fall through
+    }
+  }
+
+  // Legacy fallback: luca_user cookie
+  const legacyUserId = parseCookie(cookieHeader, "luca_user");
+  if (legacyUserId) {
     const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
+      where: eq(users.id, legacyUserId),
     });
     if (user) {
-      return c.redirect(`/settings/${user.id}`);
+      return c.redirect("/settings");
     }
   }
 

@@ -10,25 +10,21 @@ import {
 } from "../db/schema.js";
 import { listCalendars } from "../lib/google.js";
 import { env } from "../config.js";
+import { authMiddleware } from "../middleware/auth.js";
 import { fontLinks, baseStyles, settingsStyles, headerStyles, logoSvg } from "../lib/styles.js";
 
-export const settingsRoutes = new Hono();
+type User = typeof users.$inferSelect;
+
+export const settingsRoutes = new Hono<{ Variables: { user: User } }>();
+
+// Apply auth middleware to all settings routes
+settingsRoutes.use("*", authMiddleware);
 
 // ── Main Settings Page ──────────────────────────────────────────────────────
 
-settingsRoutes.get("/:userId", async (c) => {
-  const { userId } = c.req.param();
-
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-  });
-
-  if (!user) {
-    return c.html("<h1>User not found</h1>", 404);
-  }
-
-  // Set cookie so root "/" can redirect back here
-  c.header("Set-Cookie", `luca_user=${userId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`);
+settingsRoutes.get("/", async (c) => {
+  const user = c.get("user");
+  const userId = user.id;
 
   const calendars = await db.query.userCalendars.findMany({
     where: eq(userCalendars.userId, userId),
@@ -60,12 +56,9 @@ settingsRoutes.get("/:userId", async (c) => {
 
 // ── API: Refresh Calendars ──────────────────────────────────────────────────
 
-settingsRoutes.post("/:userId/calendars/refresh", async (c) => {
-  const { userId } = c.req.param();
-
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-  });
+settingsRoutes.post("/calendars/refresh", async (c) => {
+  const user = c.get("user");
+  const userId = user.id;
 
   if (!user?.googleTokens) {
     return c.json({ error: "No Google Calendar connected" }, 400);
@@ -99,7 +92,7 @@ settingsRoutes.post("/:userId/calendars/refresh", async (c) => {
 
 // ── API: Toggle Calendar Conflict Checking ──────────────────────────────────
 
-settingsRoutes.post("/:userId/calendars/:calendarDbId/toggle", async (c) => {
+settingsRoutes.post("/calendars/:calendarDbId/toggle", async (c) => {
   const { calendarDbId } = c.req.param();
 
   const cal = await db.query.userCalendars.findFirst({
@@ -120,8 +113,8 @@ settingsRoutes.post("/:userId/calendars/:calendarDbId/toggle", async (c) => {
 
 // ── API: Create/Update Meeting Type ─────────────────────────────────────────
 
-settingsRoutes.post("/:userId/meeting-types", async (c) => {
-  const { userId } = c.req.param();
+settingsRoutes.post("/meeting-types", async (c) => {
+  const userId = c.get("user").id;
   const body = await c.req.json<{
     id?: string;
     name: string;
@@ -180,7 +173,7 @@ settingsRoutes.post("/:userId/meeting-types", async (c) => {
 
 // ── API: Delete Meeting Type ────────────────────────────────────────────────
 
-settingsRoutes.post("/:userId/meeting-types/:typeId/delete", async (c) => {
+settingsRoutes.post("/meeting-types/:typeId/delete", async (c) => {
   const { typeId } = c.req.param();
 
   // Delete associated locations first
@@ -192,7 +185,7 @@ settingsRoutes.post("/:userId/meeting-types/:typeId/delete", async (c) => {
 
 // ── API: Create/Update Location ─────────────────────────────────────────────
 
-settingsRoutes.post("/:userId/locations", async (c) => {
+settingsRoutes.post("/locations", async (c) => {
   const body = await c.req.json<{
     id?: string;
     meetingTypeId: string;
@@ -231,7 +224,7 @@ settingsRoutes.post("/:userId/locations", async (c) => {
 
 // ── API: Delete Location ────────────────────────────────────────────────────
 
-settingsRoutes.post("/:userId/locations/:locationId/delete", async (c) => {
+settingsRoutes.post("/locations/:locationId/delete", async (c) => {
   const { locationId } = c.req.param();
   await db.delete(meetingLocations).where(eq(meetingLocations.id, locationId));
   return c.json({ status: "deleted" });
@@ -239,8 +232,8 @@ settingsRoutes.post("/:userId/locations/:locationId/delete", async (c) => {
 
 // ── API: Save Availability Rule ─────────────────────────────────────────────
 
-settingsRoutes.post("/:userId/availability", async (c) => {
-  const { userId } = c.req.param();
+settingsRoutes.post("/availability", async (c) => {
+  const userId = c.get("user").id;
   const body = await c.req.json<{
     id?: string;
     dayOfWeek: number;
@@ -278,7 +271,7 @@ settingsRoutes.post("/:userId/availability", async (c) => {
 
 // ── API: Delete Availability Rule ───────────────────────────────────────────
 
-settingsRoutes.post("/:userId/availability/:ruleId/delete", async (c) => {
+settingsRoutes.post("/availability/:ruleId/delete", async (c) => {
   const { ruleId } = c.req.param();
   await db.delete(availabilityRules).where(eq(availabilityRules.id, ruleId));
   return c.json({ status: "deleted" });
@@ -565,8 +558,6 @@ function renderSettingsPage(
   <div id="toast"></div>
 
   <script>
-    const userId = '${user.id}';
-
     function toast(msg) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -588,7 +579,7 @@ function renderSettingsPage(
 
     async function refreshCalendars() {
       try {
-        const res = await fetch('/settings/' + userId + '/calendars/refresh', { method: 'POST' });
+        const res = await fetch('/settings/calendars/refresh', { method: 'POST' });
         const data = await res.json();
         if (res.ok) {
           toast('Synced ' + data.count + ' calendars');
@@ -602,7 +593,7 @@ function renderSettingsPage(
     }
 
     async function toggleCalendar(calendarDbId) {
-      await fetch('/settings/' + userId + '/calendars/' + calendarDbId + '/toggle', { method: 'POST' });
+      await fetch('/settings/calendars/' + calendarDbId + '/toggle', { method: 'POST' });
       toast('Calendar updated');
     }
 
@@ -624,7 +615,7 @@ function renderSettingsPage(
         isActive: true,
       };
 
-      await fetch('/settings/' + userId + '/availability', {
+      await fetch('/settings/availability', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -687,7 +678,7 @@ function renderSettingsPage(
         isDefault: document.getElementById('typeDefault').checked,
       };
 
-      await fetch('/settings/' + userId + '/meeting-types', {
+      await fetch('/settings/meeting-types', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -726,7 +717,7 @@ function renderSettingsPage(
         notes: document.getElementById('locNotes').value || undefined,
       };
 
-      await fetch('/settings/' + userId + '/locations', {
+      await fetch('/settings/locations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
