@@ -10,7 +10,7 @@ import { meetingRoutes } from "./routes/meetings.js";
 import { authRoutes } from "./routes/auth.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { joinRoutes } from "./routes/join.js";
-import { fontLinks, baseStyles, landingStyles } from "./lib/styles.js";
+import { fontLinks, baseStyles, landingStyles, logoSvg } from "./lib/styles.js";
 
 const app = new Hono();
 
@@ -48,13 +48,14 @@ app.get("/", async (c) => {
   <style>
     ${baseStyles}
     ${landingStyles}
-    h1 { font-size: 2rem; margin-bottom: 8px; }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="logo">&#128197;</div>
-    <h1>Luca</h1>
+    <div class="landing-brand">
+      ${logoSvg}
+      <span class="landing-wordmark">luca</span>
+    </div>
     <p class="tagline">Your AI scheduling assistant</p>
     <div class="how-it-works">
       <h2>How it works</h2>
@@ -72,7 +73,6 @@ app.get("/", async (c) => {
       </div>
     </div>
     <a href="/join" class="cta-btn">Get Started</a>
-    <br>
     <div class="email-badge">luca@tanzillo.ai</div>
   </div>
 </body>

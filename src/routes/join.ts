@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, availabilityRules, meetingTypes } from "../db/schema.js";
 import { env } from "../config.js";
-import { fontLinks, baseStyles, landingStyles, joinStyles } from "../lib/styles.js";
+import { fontLinks, baseStyles, landingStyles, joinStyles, logoSvg } from "../lib/styles.js";
 
 export const joinRoutes = new Hono();
 
@@ -34,8 +34,11 @@ joinRoutes.get("/", (c) => {
 </head>
 <body>
   <div class="container">
-    <div class="logo" style="text-align:center;font-size:40px;margin-bottom:4px;">&#128197;</div>
-    <h1 style="text-align:center;">Join Luca</h1>
+    <div class="landing-brand">
+      ${logoSvg}
+      <span class="landing-wordmark">luca</span>
+    </div>
+    <h1 style="text-align:center;font-size:1.25rem;margin-top:12px;">Join Luca</h1>
     <p class="subtitle">Set up your AI scheduling assistant</p>
     <div class="card">
       <div class="error" id="error"></div>
