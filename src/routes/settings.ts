@@ -248,6 +248,25 @@ settingsRoutes.post("/locations/:locationId/delete", async (c) => {
   return c.json({ status: "deleted" });
 });
 
+// ── API: Save Timezone ──────────────────────────────────────────────────────
+
+settingsRoutes.post("/timezone", async (c) => {
+  const userId = c.get("user").id;
+  const body = await c.req.json<{ timezone: string }>();
+  const tz = body.timezone?.trim();
+
+  if (!tz) {
+    return c.json({ error: "Timezone is required" }, 400);
+  }
+
+  await db
+    .update(users)
+    .set({ timezone: tz })
+    .where(eq(users.id, userId));
+
+  return c.json({ status: "ok" });
+});
+
 // ── API: Save Work Email ────────────────────────────────────────────────────
 
 settingsRoutes.post("/work-email", async (c) => {
@@ -325,6 +344,30 @@ export function to12h(time: string | null | undefined): string {
   if (h === 0) h = 12;
   else if (h > 12) h -= 12;
   return `${h}:${m.slice(0, 2)} ${ampm}`;
+}
+
+const COMMON_TIMEZONES = [
+  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+  "America/Anchorage", "Pacific/Honolulu", "America/Phoenix",
+  "America/Toronto", "America/Vancouver",
+  "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Amsterdam", "Europe/Rome",
+  "Europe/Madrid", "Europe/Zurich", "Europe/Stockholm", "Europe/Warsaw",
+  "Europe/Athens", "Europe/Moscow",
+  "Asia/Dubai", "Asia/Kolkata", "Asia/Singapore", "Asia/Shanghai",
+  "Asia/Tokyo", "Asia/Seoul", "Asia/Hong_Kong",
+  "Australia/Sydney", "Australia/Melbourne", "Australia/Perth",
+  "Pacific/Auckland",
+  "America/Sao_Paulo", "America/Argentina/Buenos_Aires", "America/Mexico_City",
+  "Africa/Cairo", "Africa/Johannesburg", "Africa/Lagos",
+];
+
+function renderTimezoneOptions(currentTz: string | null | undefined): string {
+  const tz = currentTz || "America/New_York";
+  // If the user's timezone isn't in our list, add it
+  const zones = COMMON_TIMEZONES.includes(tz) ? COMMON_TIMEZONES : [tz, ...COMMON_TIMEZONES];
+  return zones
+    .map((z) => `<option value="${z}"${z === tz ? " selected" : ""}>${z.replace(/_/g, " ")}</option>`)
+    .join("\n");
 }
 
 /**
@@ -425,8 +468,16 @@ export function renderSettingsBody(
     .join("\n");
 
   return `
-    <h2 style="margin-top: 0;">Settings</h2>
-    <p class="text-sm text-muted" style="margin-bottom: 1.5rem;">${user.timezone}</p>
+    <!-- Timezone Section -->
+    <h2>Timezone</h2>
+    <div class="form-group" style="display:flex;gap:0.5rem;align-items:flex-end;">
+      <div style="flex:1;">
+        <select id="timezoneSelect">
+          ${renderTimezoneOptions(user.timezone)}
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="saveTimezone()">Save</button>
+    </div>
 
     <!-- Calendars Section -->
     <h2>Calendars</h2>
@@ -594,6 +645,29 @@ export function renderSettingsBody(
         if (e.target === m) closeModal(m.id);
       });
     });
+
+    // ── Timezone ──────────────────
+
+    async function saveTimezone() {
+      const tz = document.getElementById('timezoneSelect').value;
+      if (!tz) return;
+      try {
+        const res = await fetch('/settings/timezone', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timezone: tz }),
+        });
+        if (res.ok) {
+          toast('Timezone updated');
+          setTimeout(() => location.reload(), 500);
+        } else {
+          const data = await res.json();
+          toast('Error: ' + (data.error || 'Failed'));
+        }
+      } catch (e) {
+        toast('Network error');
+      }
+    }
 
     // ── Calendars ──────────────────
 
@@ -875,6 +949,7 @@ function renderSettingsPage(
     </div>
   </header>
   <div class="container">
+    <h2 style="margin-top: 0;">Settings</h2>
     ${body}
   </div>
   <div id="toast"></div>

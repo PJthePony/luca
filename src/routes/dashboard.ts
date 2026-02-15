@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, count as dbCount } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   users,
@@ -37,14 +37,20 @@ dashboardRoutes.use("*", authMiddleware);
 
 // ── Main Dashboard Page ──────────────────────────────────────────────────────
 
+const PAGE_SIZE = 10;
+
 dashboardRoutes.get("/", async (c) => {
   const user = c.get("user");
   const userId = user.id;
 
-  // Fetch meetings with related data
+  // Count total meetings
+  const [{ total }] = await db.select({ total: dbCount() }).from(meetings).where(eq(meetings.organizerId, userId));
+
+  // Fetch first page of meetings
   const userMeetings = await db.query.meetings.findMany({
     where: eq(meetings.organizerId, userId),
     orderBy: [desc(meetings.updatedAt)],
+    limit: PAGE_SIZE,
   });
 
   const meetingsData = await Promise.all(
@@ -106,8 +112,65 @@ dashboardRoutes.get("/", async (c) => {
     where: eq(availabilityRules.userId, userId),
   });
 
-  const html = renderDashboardPage(user, meetingsData, calendars, typesWithLocations, rules, env.GOOGLE_MAPS_API_KEY);
+  const hasMore = total > PAGE_SIZE;
+  const html = renderDashboardPage(user, meetingsData, hasMore, calendars, typesWithLocations, rules, env.GOOGLE_MAPS_API_KEY);
   return c.html(html);
+});
+
+// ── API: Load More Meetings ──────────────────────────────────────────────────
+
+dashboardRoutes.get("/meetings", async (c) => {
+  const user = c.get("user");
+  const userId = user.id;
+  const offset = parseInt(c.req.query("offset") || "0", 10);
+  const tz = user.timezone || "America/New_York";
+
+  const [{ total }] = await db.select({ total: dbCount() }).from(meetings).where(eq(meetings.organizerId, userId));
+
+  const userMeetings = await db.query.meetings.findMany({
+    where: eq(meetings.organizerId, userId),
+    orderBy: [desc(meetings.updatedAt)],
+    limit: PAGE_SIZE,
+    offset,
+  });
+
+  const meetingsData = await Promise.all(
+    userMeetings.map(async (m) => {
+      const [parts, slots, thread] = await Promise.all([
+        db.query.participants.findMany({
+          where: eq(participants.meetingId, m.id),
+        }),
+        db.query.proposedSlots.findMany({
+          where: eq(proposedSlots.meetingId, m.id),
+        }),
+        db.query.emailThreads.findFirst({
+          where: eq(emailThreads.meetingId, m.id),
+        }),
+      ]);
+
+      let messageCount = 0;
+      if (thread) {
+        const msgs = await db.query.emailMessages.findMany({
+          where: eq(emailMessages.threadId, thread.id),
+        });
+        messageCount = msgs.length;
+      }
+
+      let meetingType: typeof meetingTypes.$inferSelect | null = null;
+      if (m.meetingTypeId) {
+        meetingType = (await db.query.meetingTypes.findFirst({
+          where: eq(meetingTypes.id, m.meetingTypeId),
+        })) ?? null;
+      }
+
+      return { meeting: m, participants: parts, slots, thread, messageCount, meetingType };
+    }),
+  );
+
+  const cardsHtml = meetingsData.map((d) => renderMeetingCard(d, tz)).join("\n");
+  const hasMore = offset + PAGE_SIZE < total;
+
+  return c.json({ html: cardsHtml, hasMore });
 });
 
 // ── API: Get Comms for a Meeting ─────────────────────────────────────────────
@@ -159,6 +222,8 @@ dashboardRoutes.get("/meetings/:meetingId/comms", async (c) => {
 dashboardRoutes.post("/meetings/:meetingId/cancel", async (c) => {
   const { meetingId } = c.req.param();
   const user = c.get("user");
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({ reason: "" }));
+  const reason = body.reason?.trim() || "";
 
   const meeting = await db.query.meetings.findFirst({
     where: eq(meetings.id, meetingId),
@@ -167,126 +232,24 @@ dashboardRoutes.post("/meetings/:meetingId/cancel", async (c) => {
     return c.json({ error: "Not found" }, 404);
   }
 
+  if (meeting.status === "cancelled") {
+    return c.json({ error: "Meeting is already cancelled" }, 400);
+  }
+
   const tokens = user.googleTokens as { access_token?: string | null; refresh_token?: string | null };
   if (!tokens) {
     return c.json({ error: "Calendar not connected" }, 400);
   }
 
-  await cancelMeeting(meetingId, tokens);
+  try {
+    await cancelMeeting(meetingId, tokens);
+  } catch (e: any) {
+    console.error("cancelMeeting error:", e);
+    return c.json({ error: e.message ?? "Failed to cancel meeting" }, 500);
+  }
 
   // Send cancellation email
-  const thread = await db.query.emailThreads.findFirst({
-    where: eq(emailThreads.meetingId, meetingId),
-  });
-
-  if (thread) {
-    const allParticipants = await db.query.participants.findMany({
-      where: eq(participants.meetingId, meetingId),
-    });
-    const replyTo = allParticipants
-      .filter((p) => p.role !== "organizer")
-      .map((p) => p.email);
-
-    await sendThreadedReply({
-      threadId: thread.id,
-      to: replyTo,
-      bcc: [user.email],
-      text: `This meeting has been cancelled.\n\n- Luca`,
-    });
-  }
-
-  await notifyUser({
-    type: "meeting_cancelled",
-    userId: user.id,
-    meetingTitle: meeting.title ?? "Meeting",
-    meetingShortId: meeting.shortId,
-  });
-
-  return c.json({ status: "cancelled" });
-});
-
-// ── API: Nudge a Participant ─────────────────────────────────────────────────
-
-dashboardRoutes.post("/meetings/:meetingId/nudge", async (c) => {
-  const { meetingId } = c.req.param();
-  const user = c.get("user");
-
-  const meeting = await db.query.meetings.findFirst({
-    where: eq(meetings.id, meetingId),
-  });
-  if (!meeting || meeting.organizerId !== user.id) {
-    return c.json({ error: "Not found" }, 404);
-  }
-
-  const thread = await db.query.emailThreads.findFirst({
-    where: eq(emailThreads.meetingId, meetingId),
-  });
-
-  if (!thread) {
-    return c.json({ error: "No email thread found" }, 400);
-  }
-
-  const allParticipants = await db.query.participants.findMany({
-    where: eq(participants.meetingId, meetingId),
-  });
-  const pendingParticipants = allParticipants
-    .filter((p) => p.role !== "organizer" && p.rsvpStatus === "pending")
-    .map((p) => p.email);
-
-  if (pendingParticipants.length === 0) {
-    return c.json({ error: "No pending participants to nudge" }, 400);
-  }
-
-  await sendThreadedReply({
-    threadId: thread.id,
-    to: pendingParticipants,
-    bcc: [user.email],
-    text: `Just checking in — have you had a chance to pick a time? You can select one here: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
-  });
-
-  return c.json({ status: "nudged", count: pendingParticipants.length });
-});
-
-// ── API: Reschedule a Meeting ────────────────────────────────────────────────
-
-dashboardRoutes.post("/meetings/:meetingId/reschedule", async (c) => {
-  const { meetingId } = c.req.param();
-  const user = c.get("user");
-
-  const meeting = await db.query.meetings.findFirst({
-    where: eq(meetings.id, meetingId),
-  });
-  if (!meeting || meeting.organizerId !== user.id) {
-    return c.json({ error: "Not found" }, 404);
-  }
-
-  const tokens = user.googleTokens as { access_token?: string | null; refresh_token?: string | null };
-  if (!tokens) {
-    return c.json({ error: "Calendar not connected" }, 400);
-  }
-
-  // Start rescheduling (releases existing holds)
-  await startRescheduling(meetingId, tokens);
-
-  // Find new available slots
-  const newSlots = await findAvailableSlots(
-    user.id,
-    meetingId,
-    meeting.durationMin,
-    [],
-    14,
-    meeting.meetingTypeId,
-  );
-
-  if (newSlots.length > 0) {
-    await proposeTimes(
-      meetingId,
-      newSlots.map((s) => ({ start: s.start, end: s.end })),
-      tokens,
-      meeting.title ?? "Meeting",
-    );
-
-    // Send email with new times
+  try {
     const thread = await db.query.emailThreads.findFirst({
       where: eq(emailThreads.meetingId, meetingId),
     });
@@ -299,31 +262,160 @@ dashboardRoutes.post("/meetings/:meetingId/reschedule", async (c) => {
         .filter((p) => p.role !== "organizer")
         .map((p) => p.email);
 
-      const tz = user.timezone || "America/New_York";
-      const timeOptions = newSlots
-        .map(
-          (s, i) =>
-            `${i + 1}. ${s.start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz })} at ${s.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })}`,
-        )
-        .join("\n");
-
+      const reasonLine = reason ? `\nReason: ${reason}\n` : "";
       await sendThreadedReply({
         threadId: thread.id,
         to: replyTo,
         bcc: [user.email],
-        text: `We need to reschedule. Here are some new options:\n\n${timeOptions}\n\nPick one here: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
+        text: `This meeting has been cancelled.${reasonLine}\n- Luca`,
       });
     }
+
+    await notifyUser({
+      type: "meeting_cancelled",
+      userId: user.id,
+      meetingTitle: meeting.title ?? "Meeting",
+      meetingShortId: meeting.shortId,
+    });
+  } catch (e) {
+    console.error("cancel notification error:", e);
   }
 
-  await notifyUser({
-    type: "meeting_rescheduled",
-    userId: user.id,
-    meetingTitle: meeting.title ?? "Meeting",
-    meetingShortId: meeting.shortId,
-  });
+  return c.json({ status: "cancelled" });
+});
 
-  return c.json({ status: "rescheduling", newSlots: newSlots.length });
+// ── API: Nudge a Participant ─────────────────────────────────────────────────
+
+dashboardRoutes.post("/meetings/:meetingId/nudge", async (c) => {
+  const { meetingId } = c.req.param();
+  const user = c.get("user");
+
+  try {
+    const meeting = await db.query.meetings.findFirst({
+      where: eq(meetings.id, meetingId),
+    });
+    if (!meeting || meeting.organizerId !== user.id) {
+      return c.json({ error: "Not found" }, 404);
+    }
+
+    const thread = await db.query.emailThreads.findFirst({
+      where: eq(emailThreads.meetingId, meetingId),
+    });
+
+    if (!thread) {
+      return c.json({ error: "No email thread found" }, 400);
+    }
+
+    const allParticipants = await db.query.participants.findMany({
+      where: eq(participants.meetingId, meetingId),
+    });
+    const pendingParticipants = allParticipants
+      .filter((p) => p.role !== "organizer" && p.rsvpStatus === "pending")
+      .map((p) => p.email);
+
+    if (pendingParticipants.length === 0) {
+      return c.json({ error: "No pending participants to nudge" }, 400);
+    }
+
+    await sendThreadedReply({
+      threadId: thread.id,
+      to: pendingParticipants,
+      bcc: [user.email],
+      text: `Just checking in — have you had a chance to pick a time? You can select one here: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
+    });
+
+    return c.json({ status: "nudged", count: pendingParticipants.length });
+  } catch (e: any) {
+    console.error("nudge error:", e);
+    return c.json({ error: e.message ?? "Failed to send nudge" }, 500);
+  }
+});
+
+// ── API: Reschedule a Meeting ────────────────────────────────────────────────
+
+dashboardRoutes.post("/meetings/:meetingId/reschedule", async (c) => {
+  const { meetingId } = c.req.param();
+  const user = c.get("user");
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({ reason: "" }));
+  const reason = body.reason?.trim() || "";
+
+  try {
+    const meeting = await db.query.meetings.findFirst({
+      where: eq(meetings.id, meetingId),
+    });
+    if (!meeting || meeting.organizerId !== user.id) {
+      return c.json({ error: "Not found" }, 404);
+    }
+
+    const tokens = user.googleTokens as { access_token?: string | null; refresh_token?: string | null };
+    if (!tokens) {
+      return c.json({ error: "Calendar not connected" }, 400);
+    }
+
+    // Start rescheduling (releases existing holds)
+    await startRescheduling(meetingId, tokens);
+
+    // Find new available slots
+    const newSlots = await findAvailableSlots(
+      user.id,
+      meetingId,
+      meeting.durationMin,
+      [],
+      14,
+      meeting.meetingTypeId,
+    );
+
+    if (newSlots.length > 0) {
+      await proposeTimes(
+        meetingId,
+        newSlots.map((s) => ({ start: s.start, end: s.end })),
+        tokens,
+        meeting.title ?? "Meeting",
+      );
+
+      // Send email with new times
+      const thread = await db.query.emailThreads.findFirst({
+        where: eq(emailThreads.meetingId, meetingId),
+      });
+
+      if (thread) {
+        const allParticipants = await db.query.participants.findMany({
+          where: eq(participants.meetingId, meetingId),
+        });
+        const replyTo = allParticipants
+          .filter((p) => p.role !== "organizer")
+          .map((p) => p.email);
+
+        const tz = user.timezone || "America/New_York";
+        const timeOptions = newSlots
+          .map(
+            (s, i) =>
+              `${i + 1}. ${s.start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz })} at ${s.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })}`,
+          )
+          .join("\n");
+
+        const reasonLine = reason ? `\nReason: ${reason}\n` : "";
+        await sendThreadedReply({
+          threadId: thread.id,
+          to: replyTo,
+          bcc: [user.email],
+          text: `We need to reschedule.${reasonLine}\n\nHere are some new options:\n\n${timeOptions}\n\nPick one here: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
+        });
+      }
+    }
+
+    await notifyUser({
+      type: "meeting_rescheduled",
+      userId: user.id,
+      meetingTitle: meeting.title ?? "Meeting",
+      meetingShortId: meeting.shortId,
+    });
+
+    return c.json({ status: "rescheduling", newSlots: newSlots.length });
+  } catch (e: any) {
+    console.error("reschedule error:", e);
+    return c.json({ error: e.message ?? "Failed to reschedule meeting" }, 500);
+  }
 });
 
 // ── API: Update Agenda ───────────────────────────────────────────────────────
@@ -374,6 +466,7 @@ type MeetingTypeWithLocations = typeof meetingTypes.$inferSelect & {
 function renderDashboardPage(
   user: typeof users.$inferSelect,
   meetingsData: MeetingData[],
+  hasMore: boolean,
   calendars: (typeof userCalendars.$inferSelect)[],
   types: MeetingTypeWithLocations[],
   rules: (typeof availabilityRules.$inferSelect)[],
@@ -415,7 +508,7 @@ function renderDashboardPage(
 
   <div class="container">
     <div class="page-header">
-      <h1>Meetings</h1>
+      <h1>Luca's Meetings</h1>
       <select class="filter-select" onchange="filterMeetings(this.value)">
         <option value="all">All</option>
         <option value="active">Active</option>
@@ -427,6 +520,7 @@ function renderDashboardPage(
     <div id="meetingsList">
       ${meetingCards || `<div class="empty-state"><p>No meetings yet.</p><p class="text-sm">CC luca@tanzillo.ai on an email to get started.</p></div>`}
     </div>
+    ${hasMore ? `<div id="loadMoreWrap" style="text-align:center;padding:1.5rem 0;"><button class="btn btn-secondary" id="loadMoreBtn" onclick="loadMore()">Load more</button></div>` : ""}
   </div>
 
   <!-- Settings Modal -->
@@ -488,6 +582,34 @@ function renderDashboardPage(
         if (e.target === m) closeModal(m.id);
       });
     });
+
+    // ── Load More ─────────────────────
+
+    let meetingsOffset = ${meetingsData.length};
+
+    async function loadMore() {
+      const btn = document.getElementById('loadMoreBtn');
+      btn.textContent = 'Loading...';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/dashboard/meetings?offset=' + meetingsOffset);
+        const data = await res.json();
+        if (data.html) {
+          document.getElementById('meetingsList').insertAdjacentHTML('beforeend', data.html);
+          meetingsOffset += ${PAGE_SIZE};
+        }
+        if (!data.hasMore) {
+          document.getElementById('loadMoreWrap').remove();
+        } else {
+          btn.textContent = 'Load more';
+          btn.disabled = false;
+        }
+      } catch (e) {
+        btn.textContent = 'Load more';
+        btn.disabled = false;
+        toast('Failed to load more meetings');
+      }
+    }
 
     // ── Filter ────────────────────────
 
@@ -576,9 +698,14 @@ function renderDashboardPage(
     // ── Actions ───────────────────────
 
     async function cancelMeeting(meetingId) {
-      if (!confirm('Cancel this meeting? Participants will be notified.')) return;
+      const reason = prompt('Why are you cancelling? (This will be included in the notification to participants)');
+      if (reason === null) return;
       try {
-        const res = await fetch('/dashboard/meetings/' + meetingId + '/cancel', { method: 'POST' });
+        const res = await fetch('/dashboard/meetings/' + meetingId + '/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: reason || '' }),
+        });
         if (res.ok) {
           toast('Meeting cancelled');
           setTimeout(() => location.reload(), 800);
@@ -606,16 +733,20 @@ function renderDashboardPage(
     }
 
     async function rescheduleMeeting(meetingId) {
-      if (!confirm('Reschedule this meeting? New time options will be proposed.')) return;
+      const reason = prompt('Why are you rescheduling? (This will be included in the message to participants)');
+      if (reason === null) return;
       try {
-        const res = await fetch('/dashboard/meetings/' + meetingId + '/reschedule', { method: 'POST' });
+        const res = await fetch('/dashboard/meetings/' + meetingId + '/reschedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: reason || '' }),
+        });
         const data = await res.json();
         if (res.ok) {
           toast('Rescheduling — ' + data.newSlots + ' new time(s) proposed');
           setTimeout(() => location.reload(), 800);
         } else {
-          const d = await res.json().catch(() => ({}));
-          toast('Error: ' + (d.error || 'Failed'));
+          toast('Error: ' + (data.error || 'Failed'));
         }
       } catch (e) {
         toast('Network error');
@@ -643,7 +774,7 @@ function renderDashboardPage(
         html += '</div>';
       });
       html += '<div class="agenda-add-row">';
-      html += '<input type="text" id="agendaNewItem" placeholder="New agenda item..." onkeydown="if(event.key===\'Enter\')addAgendaItem()">';
+      html += '<input type="text" id="agendaNewItem" placeholder="New agenda item..." onkeydown="if(event.key===\\\'Enter\\\')addAgendaItem()">';
       html += '<button class="btn btn-primary btn-sm" onclick="addAgendaItem()">Add</button>';
       html += '</div>';
       document.getElementById('agendaModalBody').innerHTML = html;
