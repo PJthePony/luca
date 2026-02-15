@@ -1,7 +1,8 @@
 import { jwtVerify } from "jose";
+import { createSecretKey } from "node:crypto";
 import { env } from "../config.js";
 
-const secret = Buffer.from(env.SUPABASE_JWT_SECRET, "base64");
+const secret = createSecretKey(Buffer.from(env.SUPABASE_JWT_SECRET, "base64"));
 
 export async function verifySupabaseJwt(token: string) {
   const { payload } = await jwtVerify(token, secret);
