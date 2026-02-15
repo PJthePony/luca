@@ -62,7 +62,8 @@ authRoutes.get("/session", async (c) => {
         .set({ supabaseId: payload.sub, updatedAt: new Date() })
         .where(eq(users.id, user.id));
     }
-  } catch {
+  } catch (err) {
+    console.error("Session exchange failed:", err);
     return c.text("Invalid token", 401);
   }
 
