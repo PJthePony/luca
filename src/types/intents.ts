@@ -6,7 +6,8 @@ export type Intent =
   | "propose_alternatives"
   | "ask_for_more_times"
   | "freeform_question"
-  | "unrelated";
+  | "unrelated"
+  | "create_task";
 
 export interface TimePreference {
   type: "prefer" | "avoid" | "available" | "unavailable";
@@ -43,4 +44,8 @@ export interface ParsedEmail {
   response_draft: string;
   meeting_context_summary?: string;
   agenda_items?: string[];
+  task_title?: string;
+  task_notes?: string;
+  task_location?: string;
+  task_activate_at?: string;
 }

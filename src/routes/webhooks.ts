@@ -5,6 +5,7 @@ import { emailMessages, emailThreads, meetings, meetingLocations, meetingTypes, 
 import {
   parseInboundWebhook,
   verifyWebhookSignature,
+  sendEmail,
 } from "../lib/mailgun.js";
 import { resolveThread } from "../services/thread-resolver.js";
 import { parseInboundEmail } from "../services/ai-parser.js";
@@ -12,6 +13,8 @@ import { sendThreadedReply } from "../services/email.js";
 import { findAvailableSlots } from "../services/slot-proposer.js";
 import * as machine from "../services/meeting-machine.js";
 import { notifyUser } from "../services/notification.js";
+import { parseTaskEmail } from "../lib/claude.js";
+import { createNexbiteTask } from "../lib/nexbite.js";
 import { EmailDirection } from "../types/index.js";
 import { env } from "../config.js";
 
@@ -87,7 +90,67 @@ webhookRoutes.post("/inbound", async (c) => {
     }
   }
 
-  // Resolve the thread / meeting
+  // Check: is this a direct email to Luca (not a reply to an existing thread)?
+  const lucaAddr = `luca@${env.MAILGUN_DOMAIN}`;
+  const isLucaInTo = email.to.some(
+    (addr) => addr.toLowerCase().includes(lucaAddr),
+  );
+  const isLucaInCc = email.cc.some(
+    (addr) => addr.toLowerCase().includes(lucaAddr),
+  );
+  const hasReplyHeaders = !!(email.inReplyTo || email.references);
+
+  if (isLucaInTo && !isLucaInCc && !hasReplyHeaders) {
+    // Direct email to Luca — use Claude to decide: task or scheduling
+    console.log("=== DIRECT EMAIL TO LUCA — parsing as potential task ===");
+
+    // Find the account owner (task owner)
+    const taskOwner = await db.query.users.findFirst({
+      where: eq(users.email, email.from),
+    }) ?? await db.query.users.findFirst();
+
+    if (!taskOwner) {
+      console.warn("No registered users found to own this task");
+      return c.json({ status: "no_user" });
+    }
+
+    const tz = taskOwner.timezone || "America/New_York";
+
+    const parsed = await parseTaskEmail(
+      email.strippedText || email.bodyPlain,
+      email.from,
+      email.fromName,
+      email.subject,
+      tz,
+    );
+
+    console.log("Task parsed:", JSON.stringify(parsed));
+
+    // Create the task in Nexbite
+    const task = await createNexbiteTask({
+      title: parsed.task_title,
+      notes: parsed.task_notes,
+      location: parsed.task_location,
+      tags: ["luca"],
+      activate_at: parsed.task_activate_at,
+    });
+
+    console.log("Created Nexbite task:", JSON.stringify(task));
+
+    // Reply to the sender with confirmation
+    await sendEmail({
+      to: [email.from],
+      subject: email.subject.startsWith("Re:")
+        ? email.subject
+        : `Re: ${email.subject}`,
+      text: `${parsed.response_draft}\n\n- Luca`,
+      headers: email.messageId ? { "In-Reply-To": email.messageId } : {},
+    });
+
+    return c.json({ status: "task_created", taskId: task.id });
+  }
+
+  // Resolve the thread / meeting (existing scheduling flow)
   const resolved = await resolveThread(email);
   if (!resolved) {
     console.warn(`Could not resolve thread for email from ${email.from}`);
