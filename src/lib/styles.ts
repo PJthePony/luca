@@ -397,6 +397,21 @@ export const headerStyles = `
     font-size: 0.8rem;
     color: var(--nxb-color-text-secondary);
   }
+  .logout-btn {
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--nxb-color-text-secondary);
+    background: var(--nxb-color-bg);
+    border: 1px solid var(--nxb-color-border);
+    border-radius: var(--nxb-radius-md);
+    cursor: pointer;
+    transition: all var(--nxb-transition-fast);
+  }
+  .logout-btn:hover {
+    background: var(--nxb-color-border);
+    color: var(--nxb-color-text);
+  }
 `;
 
 /** Settings-specific styles (availability, locations, etc.) */

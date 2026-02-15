@@ -409,6 +409,7 @@ function renderSettingsPage(
     </a>
     <div class="app-header-nav">
       <span class="app-header-user">${user.name} · ${user.email}</span>
+      <button class="logout-btn" onclick="window.location.href='/auth/logout'">Sign out</button>
     </div>
   </header>
   <div class="container">
