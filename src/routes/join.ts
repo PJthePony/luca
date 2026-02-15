@@ -36,7 +36,6 @@ joinRoutes.get("/", (c) => {
   <div class="container">
     <div class="landing-brand">
       ${logoSvg}
-      <span class="landing-wordmark">luca</span>
     </div>
     <h1 style="text-align:center;font-size:1.25rem;margin-top:12px;">Join Luca</h1>
     <p class="subtitle">Set up your AI scheduling assistant</p>

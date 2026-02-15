@@ -54,7 +54,6 @@ app.get("/", async (c) => {
   <div class="container">
     <div class="landing-brand">
       ${logoSvg}
-      <span class="landing-wordmark">luca</span>
     </div>
     <p class="tagline">Your AI scheduling assistant</p>
     <div class="how-it-works">
