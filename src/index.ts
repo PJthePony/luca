@@ -10,6 +10,7 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { meetingRoutes } from "./routes/meetings.js";
 import { authRoutes } from "./routes/auth.js";
 import { settingsRoutes } from "./routes/settings.js";
+import { dashboardRoutes } from "./routes/dashboard.js";
 import { joinRoutes } from "./routes/join.js";
 import { fontLinks, baseStyles, landingStyles, logoSvg } from "./lib/styles.js";
 
@@ -32,7 +33,7 @@ app.get("/", async (c) => {
         where: eq(users.email, payload.email),
       });
       if (user) {
-        return c.redirect("/settings");
+        return c.redirect("/dashboard");
       }
     } catch {
       // Token invalid — fall through
@@ -46,7 +47,7 @@ app.get("/", async (c) => {
       where: eq(users.id, legacyUserId),
     });
     if (user) {
-      return c.redirect("/settings");
+      return c.redirect("/dashboard");
     }
   }
 
@@ -96,6 +97,7 @@ app.route("/meeting", meetingRoutes);
 app.route("/auth", authRoutes);
 app.route("/join", joinRoutes);
 app.route("/settings", settingsRoutes);
+app.route("/dashboard", dashboardRoutes);
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(`Luca is running on http://localhost:${info.port}`);

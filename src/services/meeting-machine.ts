@@ -27,6 +27,15 @@ function isValidTransition(from: string, to: string): boolean {
   return VALID_TRANSITIONS[from]?.includes(to) ?? false;
 }
 
+/** Look up the organizer's work email (if configured). */
+async function getWorkEmail(organizerId: string): Promise<string | null> {
+  const organizer = await db.query.users.findFirst({
+    where: eq(users.id, organizerId),
+    columns: { workEmail: true },
+  });
+  return organizer?.workEmail ?? null;
+}
+
 /**
  * Transition a meeting to PROPOSED state.
  * Creates tentative calendar holds for each proposed slot.
@@ -56,6 +65,9 @@ export async function proposeTimes(
       );
     }
 
+    // Look up work email for busy holds
+    const workEmail = await getWorkEmail(meeting.organizerId);
+
     // Create tentative calendar holds
     const createdSlots: (typeof proposedSlots.$inferSelect)[] = [];
     let meetLink: string | undefined;
@@ -75,13 +87,31 @@ export async function proposeTimes(
         meetLink = result.meetLink;
       }
 
+      // Create work calendar busy hold if configured
+      let workBusyId: string | undefined;
+      if (workEmail) {
+        try {
+          workBusyId = await gcal.createBusyHold(organizerTokens, {
+            start: slot.start,
+            end: slot.end,
+            workEmail,
+            timeZone: options?.timeZone,
+          });
+        } catch (err) {
+          console.warn("Failed to create work calendar busy hold:", err);
+        }
+      }
+
       const [created] = await tx
         .insert(proposedSlots)
         .values({
           meetingId,
           startTime: slot.start,
           endTime: slot.end,
-          tentativeEventIds: { primary: result.eventId },
+          tentativeEventIds: {
+            primary: result.eventId,
+            ...(workBusyId ? { workBusy: workBusyId } : {}),
+          },
         })
         .returning();
 
@@ -183,7 +213,7 @@ export async function confirmSlot(
       );
     }
 
-    // Delete unselected tentative events
+    // Delete unselected tentative events (and their work busy holds)
     for (const slot of allSlots) {
       if (slot.id === slotId) continue;
       const ids = slot.tentativeEventIds as Record<string, string>;
@@ -193,6 +223,13 @@ export async function confirmSlot(
           await gcal.deleteEvent(organizerTokens, ids.primary);
         } catch (err) {
           console.warn(`Failed to delete tentative event ${ids.primary}:`, err);
+        }
+      }
+      if (ids?.workBusy) {
+        try {
+          await gcal.deleteEvent(organizerTokens, ids.workBusy);
+        } catch (err) {
+          console.warn(`Failed to delete work busy hold ${ids.workBusy}:`, err);
         }
       }
     }
@@ -249,7 +286,7 @@ export async function startRescheduling(
       }
     }
 
-    // Delete all tentative events for existing slots
+    // Delete all tentative events (and work busy holds) for existing slots
     const slots = await tx
       .select()
       .from(proposedSlots)
@@ -260,6 +297,13 @@ export async function startRescheduling(
       if (ids?.primary) {
         try {
           await gcal.deleteEvent(organizerTokens, ids.primary);
+        } catch {
+          // Event may have already been deleted
+        }
+      }
+      if (ids?.workBusy) {
+        try {
+          await gcal.deleteEvent(organizerTokens, ids.workBusy);
         } catch {
           // Event may have already been deleted
         }
@@ -307,7 +351,7 @@ export async function cancelMeeting(
       } catch {}
     }
 
-    // Delete tentative events
+    // Delete tentative events and work busy holds
     const slots = await tx
       .select()
       .from(proposedSlots)
@@ -318,6 +362,11 @@ export async function cancelMeeting(
       if (ids?.primary) {
         try {
           await gcal.deleteEvent(organizerTokens, ids.primary);
+        } catch {}
+      }
+      if (ids?.workBusy) {
+        try {
+          await gcal.deleteEvent(organizerTokens, ids.workBusy);
         } catch {}
       }
     }

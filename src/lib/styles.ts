@@ -363,16 +363,13 @@ export const baseStyles = `
     .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
   }`;
 
-/** Shared app header/nav styles. */
+/** Shared app header/nav styles — Nexbite topbar pattern. */
 export const headerStyles = `
   .app-header {
-    background: var(--nxb-color-surface);
-    border-bottom: 1px solid var(--nxb-color-border);
-    padding: 12px 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    padding: 24px 48px;
   }
   .app-header-brand {
     display: flex;
@@ -382,35 +379,44 @@ export const headerStyles = `
     color: var(--nxb-color-text);
   }
   .app-header-brand:hover { text-decoration: none; }
-  .app-header-wordmark {
-    font-size: 1.1rem;
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    color: var(--nxb-color-text);
-  }
   .app-header-nav {
     display: flex;
     align-items: center;
     gap: 12px;
   }
-  .app-header-user {
-    font-size: 0.8rem;
-    color: var(--nxb-color-text-secondary);
-  }
-  .logout-btn {
+  .nav-btn {
     padding: 6px 14px;
-    font-size: 12px;
-    font-weight: 700;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
     color: var(--nxb-color-text-secondary);
-    background: var(--nxb-color-bg);
+    background: transparent;
     border: 1px solid var(--nxb-color-border);
     border-radius: var(--nxb-radius-md);
     cursor: pointer;
     transition: all var(--nxb-transition-fast);
   }
-  .logout-btn:hover {
-    background: var(--nxb-color-border);
+  .nav-btn:hover {
+    background: var(--nxb-color-primary-ghost);
+    border-color: var(--nxb-color-primary);
     color: var(--nxb-color-text);
+  }
+  .logout-btn {
+    padding: 6px 14px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--nxb-color-text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: color var(--nxb-transition-fast);
+  }
+  .logout-btn:hover {
+    color: var(--nxb-color-accent);
+  }
+  @media (max-width: 600px) {
+    .app-header { padding: 20px 24px; }
   }
 `;
 
@@ -569,3 +575,289 @@ export const joinStyles = `
     transition: background var(--nxb-transition-fast);
   }
   .card button[type="submit"]:hover { background: var(--nxb-color-primary-hover); }`;
+
+/** Dashboard page styles. */
+export const dashboardStyles = `
+  .container { max-width: 720px; margin: 0 auto; padding: 2rem 2rem 4rem; }
+
+  /* ── Page header ────────────────────────────── */
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+  .page-header h1 { margin: 0; }
+
+  .filter-select {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border: 1px solid var(--nxb-color-border);
+    border-radius: var(--nxb-radius-md);
+    background: var(--nxb-color-surface);
+    color: var(--nxb-color-text);
+    cursor: pointer;
+  }
+
+  /* ── Meeting card ───────────────────────────── */
+  .meeting-card {
+    background: var(--nxb-color-surface);
+    border: 1px solid var(--nxb-color-border);
+    border-radius: var(--nxb-radius-lg);
+    padding: 1.25rem;
+    margin-bottom: 0.75rem;
+    transition: border-color var(--nxb-transition-fast);
+  }
+  .meeting-card:hover { border-color: var(--nxb-color-border-light); }
+  .meeting-card.cancelled {
+    opacity: 0.55;
+    padding: 0.875rem 1.25rem;
+  }
+
+  .meeting-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 0.25rem;
+  }
+
+  .meeting-title {
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--nxb-color-text);
+  }
+
+  .meeting-meta {
+    font-size: 0.8rem;
+    color: var(--nxb-color-text-muted);
+    margin-bottom: 0.75rem;
+  }
+
+  /* ── Status badges ──────────────────────────── */
+  .status-badge {
+    display: inline-block;
+    padding: 0.125rem 0.625rem;
+    border-radius: 1rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .status-badge.draft { background: var(--nxb-color-border); color: var(--nxb-color-text-secondary); }
+  .status-badge.proposed { background: #fef3c7; color: #92400e; }
+  .status-badge.confirmed { background: #d1fae5; color: #065f46; }
+  .status-badge.rescheduling { background: #dbeafe; color: #1d4ed8; }
+  .status-badge.cancelled { background: #fee2e2; color: #991b1b; }
+
+  /* ── Times section ──────────────────────────── */
+  .meeting-times {
+    font-size: 0.85rem;
+    color: var(--nxb-color-text-secondary);
+    margin-bottom: 0.75rem;
+  }
+  .meeting-times strong { color: var(--nxb-color-text); }
+  .time-slot {
+    display: inline-block;
+    background: var(--nxb-color-bg);
+    border: 1px solid var(--nxb-color-border);
+    border-radius: var(--nxb-radius-sm);
+    padding: 0.125rem 0.5rem;
+    margin: 0.125rem 0.25rem 0.125rem 0;
+    font-size: 0.8rem;
+  }
+
+  /* ── Agenda ─────────────────────────────────── */
+  .meeting-agenda {
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+  }
+  .agenda-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--nxb-color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.25rem;
+  }
+  .agenda-item {
+    color: var(--nxb-color-text);
+    padding: 0.125rem 0;
+  }
+  .agenda-item::before { content: '- '; color: var(--nxb-color-text-muted); }
+  .agenda-none { color: var(--nxb-color-text-muted); font-style: italic; font-size: 0.8rem; }
+  .add-agenda-btn {
+    font-size: 0.78rem;
+    color: var(--nxb-color-primary);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    margin-top: 0.125rem;
+  }
+  .add-agenda-btn:hover { text-decoration: underline; }
+
+  /* ── Action buttons ─────────────────────────── */
+  .meeting-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--nxb-color-border);
+  }
+  .action-btn {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    border-radius: var(--nxb-radius-md);
+    cursor: pointer;
+    transition: all var(--nxb-transition-fast);
+  }
+  .action-btn.nudge {
+    background: #fef3c7; color: #92400e; border: 1px solid #fde68a;
+  }
+  .action-btn.nudge:hover { background: #fde68a; }
+  .action-btn.reschedule {
+    background: #dbeafe; color: #1d4ed8; border: 1px solid #bfdbfe;
+  }
+  .action-btn.reschedule:hover { background: #bfdbfe; }
+  .action-btn.cancel {
+    background: none; color: var(--nxb-color-danger); border: 1px solid #fecaca;
+  }
+  .action-btn.cancel:hover { background: #fee2e2; }
+  .action-btn.comms {
+    background: none; color: var(--nxb-color-primary); border: 1px solid var(--nxb-color-border);
+  }
+  .action-btn.comms:hover { background: var(--nxb-color-primary-ghost); border-color: var(--nxb-color-primary); }
+
+  /* ── RSVP badge ─────────────────────────────── */
+  .rsvp { font-size: 0.78rem; }
+  .rsvp.pending { color: #92400e; }
+  .rsvp.accepted { color: #065f46; }
+  .rsvp.declined { color: #991b1b; }
+
+  /* ── Empty state ────────────────────────────── */
+  .empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--nxb-color-text-muted);
+  }
+  .empty-state p { margin-bottom: 0.5rem; }
+
+  /* ── Settings modal wide variant ────────────── */
+  .modal-wide .modal-content {
+    max-width: 640px;
+  }
+
+  /* ── Comms modal ────────────────────────────── */
+  .comms-modal .modal-content {
+    max-width: 560px;
+  }
+  .comms-body {
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 0;
+  }
+  .comms-loading {
+    text-align: center;
+    padding: 2rem;
+    color: var(--nxb-color-text-muted);
+  }
+
+  .email-msg {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--nxb-color-border);
+  }
+  .email-msg:last-child { border-bottom: none; }
+
+  .email-msg-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.375rem;
+  }
+  .email-direction {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.0625rem 0.375rem;
+    border-radius: 0.25rem;
+  }
+  .email-direction.inbound { background: #dbeafe; color: #1d4ed8; }
+  .email-direction.outbound { background: #f1f5f9; color: var(--nxb-color-text-secondary); }
+  .email-direction.luca { background: #fef3c7; color: #92400e; }
+
+  .intent-badge {
+    font-size: 0.65rem;
+    font-weight: 500;
+    padding: 0.0625rem 0.375rem;
+    border-radius: 0.25rem;
+    background: #f3e8ff;
+    color: #7c3aed;
+  }
+
+  .email-meta {
+    font-size: 0.75rem;
+    color: var(--nxb-color-text-muted);
+    margin-bottom: 0.5rem;
+  }
+  .email-meta div { margin-bottom: 0.0625rem; }
+
+  .email-body {
+    font-size: 0.85rem;
+    color: var(--nxb-color-text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+  }
+
+  .comms-footer {
+    padding: 0.75rem 1.25rem;
+    border-top: 1px solid var(--nxb-color-border);
+    font-size: 0.75rem;
+    color: var(--nxb-color-text-muted);
+    text-align: center;
+  }
+
+  /* ── Agenda modal ───────────────────────────── */
+  .agenda-modal-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--nxb-color-border);
+  }
+  .agenda-modal-item:last-child { border-bottom: none; }
+  .agenda-remove-btn {
+    color: var(--nxb-color-text-muted);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    background: none;
+    border: none;
+    padding: 0 0.25rem;
+  }
+  .agenda-remove-btn:hover { color: var(--nxb-color-danger); }
+  .agenda-add-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  .agenda-add-row input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--nxb-color-border);
+    border-radius: var(--nxb-radius-md);
+    font-size: 0.85rem;
+    background: var(--nxb-color-bg);
+  }
+  .agenda-add-row input:focus {
+    outline: none;
+    border-color: var(--nxb-color-primary);
+    box-shadow: 0 0 0 3px var(--nxb-color-primary-ring);
+  }
+`;
