@@ -1,10 +1,15 @@
 import { jwtVerify } from "jose";
-import { createSecretKey } from "node:crypto";
 import { env } from "../config.js";
 
-const secret = createSecretKey(Buffer.from(env.SUPABASE_JWT_SECRET, "base64"));
+const secret = new Uint8Array(Buffer.from(env.SUPABASE_JWT_SECRET, "base64"));
 
 export async function verifySupabaseJwt(token: string) {
+  // Log the JWT header to debug algorithm issues
+  try {
+    const header = JSON.parse(Buffer.from(token.split(".")[0], "base64url").toString());
+    console.log("JWT header:", header);
+  } catch {}
+
   const { payload } = await jwtVerify(token, secret);
   return {
     sub: payload.sub as string,
