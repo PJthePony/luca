@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, notInArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   users,
@@ -85,6 +85,24 @@ settingsRoutes.post("/calendars/refresh", async (c) => {
         target: [userCalendars.userId, userCalendars.calendarId],
         set: { summary: cal.summary, isPrimary: cal.isPrimary },
       });
+  }
+
+  // Remove calendars that no longer exist in the user's Google account
+  const freshCalendarIds = calendars.map((c) => c.calendarId);
+  if (freshCalendarIds.length > 0) {
+    await db
+      .delete(userCalendars)
+      .where(
+        and(
+          eq(userCalendars.userId, userId),
+          notInArray(userCalendars.calendarId, freshCalendarIds),
+        ),
+      );
+  } else {
+    // Google returned zero calendars — remove all synced entries
+    await db
+      .delete(userCalendars)
+      .where(eq(userCalendars.userId, userId));
   }
 
   return c.json({ status: "ok", count: calendars.length });
@@ -582,7 +600,7 @@ function renderSettingsPage(
         const res = await fetch('/settings/calendars/refresh', { method: 'POST' });
         const data = await res.json();
         if (res.ok) {
-          toast('Synced ' + data.count + ' calendars');
+          toast('Calendars refreshed (' + data.count + ' found)');
           setTimeout(() => location.reload(), 1000);
         } else {
           toast('Error: ' + (data.error || 'Failed to refresh'));
