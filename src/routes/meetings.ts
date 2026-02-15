@@ -8,6 +8,7 @@ import { notifyUser } from "../services/notification.js";
 import { findAvailableSlots } from "../services/slot-proposer.js";
 import { emailThreads } from "../db/schema.js";
 import { env } from "../config.js";
+import { fontLinks, baseStyles, meetingStyles } from "../lib/styles.js";
 
 export const meetingRoutes = new Hono();
 
@@ -252,38 +253,11 @@ function renderMeetingPage(
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${meeting.title ?? "Meeting"} - Luca</title>
+  ${fontLinks}
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; padding: 2rem; }
-    .container { max-width: 480px; margin: 0 auto; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    .subtitle { color: #666; margin-bottom: 2rem; }
-    .status { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: 0.875rem; font-weight: 500; margin-bottom: 1.5rem; }
-    .status.proposed { background: #fef3c7; color: #92400e; }
-    .status.confirmed { background: #d1fae5; color: #065f46; }
-    .status.cancelled { background: #fee2e2; color: #991b1b; }
-    .section-label { font-weight: 600; font-size: 0.9rem; color: #555; margin: 1.5rem 0 0.75rem; }
-    .slot-card { display: block; width: 100%; padding: 1rem; margin-bottom: 0.75rem; border: 2px solid #e5e7eb; border-radius: 0.75rem; background: white; cursor: pointer; text-align: left; transition: border-color 0.15s; }
-    .slot-card:hover:not(:disabled) { border-color: #3b82f6; }
-    .slot-card:disabled { opacity: 0.7; cursor: default; }
-    .slot-card.selected { border-color: #10b981; background: #ecfdf5; }
-    .slot-card.active { border-color: #3b82f6; background: #eff6ff; }
-    .slot-date { font-weight: 600; margin-bottom: 0.25rem; }
-    .slot-time { color: #666; }
-    .slot-confirmed { color: #059669; font-weight: 600; margin-top: 0.25rem; }
-    .location-card { display: block; width: 100%; padding: 0.875rem; margin-bottom: 0.5rem; border: 2px solid #e5e7eb; border-radius: 0.75rem; background: white; cursor: pointer; text-align: left; transition: border-color 0.15s; }
-    .location-card:hover:not(:disabled) { border-color: #8b5cf6; }
-    .location-card:disabled { opacity: 0.7; cursor: default; }
-    .location-card.active { border-color: #8b5cf6; background: #f5f3ff; }
-    .location-name { font-weight: 600; }
-    .location-address { color: #666; font-size: 0.875rem; margin-top: 0.125rem; }
-    .location-notes { color: #999; font-size: 0.8rem; font-style: italic; margin-top: 0.125rem; }
-    .none-work { display: block; width: 100%; padding: 0.75rem; margin-top: 1rem; border: none; background: none; color: #3b82f6; cursor: pointer; font-size: 0.9rem; }
-    .none-work:hover { text-decoration: underline; }
-    #message { margin-top: 1rem; padding: 1rem; border-radius: 0.5rem; display: none; }
-    #message.success { display: block; background: #d1fae5; color: #065f46; }
-    #message.error { display: block; background: #fee2e2; color: #991b1b; }
-    .powered-by { text-align: center; margin-top: 3rem; color: #999; font-size: 0.8rem; }
+    ${baseStyles}
+    ${meetingStyles}
+    .container { max-width: 480px; }
   </style>
 </head>
 <body>

@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, availabilityRules, meetingTypes } from "../db/schema.js";
 import { env } from "../config.js";
+import { fontLinks, baseStyles, landingStyles, joinStyles } from "../lib/styles.js";
 
 export const joinRoutes = new Hono();
 
@@ -24,101 +25,17 @@ joinRoutes.get("/", (c) => {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Join Luca</title>
+  ${fontLinks}
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f8f9fa;
-      color: #1a1a1a;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .container {
-      max-width: 420px;
-      width: 100%;
-      padding: 40px 24px;
-    }
-    .logo {
-      text-align: center;
-      font-size: 40px;
-      margin-bottom: 4px;
-    }
-    h1 {
-      text-align: center;
-      font-size: 28px;
-      font-weight: 700;
-      margin-bottom: 4px;
-    }
-    .subtitle {
-      text-align: center;
-      color: #666;
-      font-size: 15px;
-      margin-bottom: 32px;
-    }
-    .card {
-      background: white;
-      border-radius: 12px;
-      padding: 24px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    }
-    label {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      color: #555;
-      margin-bottom: 6px;
-    }
-    input, select {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      font-size: 15px;
-      font-family: inherit;
-      margin-bottom: 16px;
-      transition: border-color 0.15s;
-    }
-    input:focus, select:focus {
-      outline: none;
-      border-color: #4f46e5;
-      box-shadow: 0 0 0 3px rgba(79,70,229,0.1);
-    }
-    button {
-      width: 100%;
-      padding: 12px;
-      background: #4f46e5;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    button:hover { background: #4338ca; }
-    .note {
-      text-align: center;
-      font-size: 13px;
-      color: #888;
-      margin-top: 16px;
-    }
-    .error {
-      background: #fef2f2;
-      color: #dc2626;
-      padding: 10px 12px;
-      border-radius: 8px;
-      font-size: 14px;
-      margin-bottom: 16px;
-      display: none;
-    }
+    ${baseStyles}
+    ${landingStyles}
+    ${joinStyles}
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="logo">&#128197;</div>
-    <h1>Join Luca</h1>
+    <div class="logo" style="text-align:center;font-size:40px;margin-bottom:4px;">&#128197;</div>
+    <h1 style="text-align:center;">Join Luca</h1>
     <p class="subtitle">Set up your AI scheduling assistant</p>
     <div class="card">
       <div class="error" id="error"></div>

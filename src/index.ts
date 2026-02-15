@@ -10,6 +10,7 @@ import { meetingRoutes } from "./routes/meetings.js";
 import { authRoutes } from "./routes/auth.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { joinRoutes } from "./routes/join.js";
+import { fontLinks, baseStyles, landingStyles } from "./lib/styles.js";
 
 const app = new Hono();
 
@@ -43,85 +44,11 @@ app.get("/", async (c) => {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Luca — AI Scheduling Assistant</title>
+  ${fontLinks}
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f8f9fa;
-      color: #1a1a1a;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .container {
-      text-align: center;
-      max-width: 480px;
-      padding: 40px 24px;
-    }
-    .logo {
-      font-size: 48px;
-      margin-bottom: 8px;
-    }
-    h1 {
-      font-size: 32px;
-      font-weight: 700;
-      margin-bottom: 8px;
-    }
-    .tagline {
-      font-size: 18px;
-      color: #666;
-      margin-bottom: 32px;
-    }
-    .how-it-works {
-      background: white;
-      border-radius: 12px;
-      padding: 24px;
-      text-align: left;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      margin-bottom: 24px;
-    }
-    .how-it-works h2 {
-      font-size: 14px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #888;
-      margin-bottom: 16px;
-    }
-    .step {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    .step:last-child { margin-bottom: 0; }
-    .step-num {
-      flex-shrink: 0;
-      width: 24px;
-      height: 24px;
-      background: #4f46e5;
-      color: white;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .step p {
-      font-size: 15px;
-      line-height: 1.5;
-      color: #333;
-    }
-    .email-badge {
-      display: inline-block;
-      background: #eef2ff;
-      color: #4f46e5;
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-size: 15px;
-      font-weight: 500;
-      font-family: monospace;
-    }
+    ${baseStyles}
+    ${landingStyles}
+    h1 { font-size: 2rem; margin-bottom: 8px; }
   </style>
 </head>
 <body>
@@ -144,7 +71,7 @@ app.get("/", async (c) => {
         <p>The other person picks a time, and Luca sends the calendar invite</p>
       </div>
     </div>
-    <a href="/join" style="display:inline-block;padding:12px 28px;background:#4f46e5;color:white;border-radius:8px;font-size:15px;font-weight:600;text-decoration:none;margin-bottom:16px;">Get Started</a>
+    <a href="/join" class="cta-btn">Get Started</a>
     <br>
     <div class="email-badge">luca@tanzillo.ai</div>
   </div>

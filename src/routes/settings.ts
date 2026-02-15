@@ -10,6 +10,7 @@ import {
 } from "../db/schema.js";
 import { listCalendars } from "../lib/google.js";
 import { env } from "../config.js";
+import { fontLinks, baseStyles, settingsStyles } from "../lib/styles.js";
 
 export const settingsRoutes = new Hono();
 
@@ -400,69 +401,11 @@ function renderSettingsPage(
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Settings - Luca</title>
+  ${fontLinks}
   ${googleMapsApiKey ? `<script async src="https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=places&loading=async"></script>` : ""}
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; padding: 2rem; }
-    .container { max-width: 640px; margin: 0 auto; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-    h2 { font-size: 1.1rem; margin: 2rem 0 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid #e5e7eb; }
-    .user-info { color: #666; margin-bottom: 2rem; }
-    .card { background: white; border-radius: 0.75rem; padding: 1rem; margin-bottom: 0.75rem; border: 1px solid #e5e7eb; }
-    .card-header { display: flex; flex-direction: column; gap: 0.25rem; }
-    .card-row { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: white; border-radius: 0.5rem; border: 1px solid #e5e7eb; margin-bottom: 0.5rem; overflow: hidden; min-width: 0; }
-    .card-row > div:first-child { min-width: 0; flex: 1; overflow: hidden; }
-    .card-row .text-muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .badge { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 1rem; font-size: 0.75rem; font-weight: 500; margin-left: 0.5rem; }
-    .badge.default { background: #dbeafe; color: #1d4ed8; }
-    .badge.online { background: #f3e8ff; color: #7c3aed; }
-    .badge.in-person { background: #fef3c7; color: #92400e; }
-    .text-sm { font-size: 0.875rem; }
-    .text-muted { color: #999; }
-    .italic { font-style: italic; }
-    .section-title { font-size: 0.8rem; font-weight: 600; color: #666; text-transform: uppercase; margin: 0.75rem 0 0.5rem; }
-    .day-label { font-weight: 500; min-width: 100px; flex-shrink: 0; }
-    .avail-row { flex-wrap: wrap; gap: 0.5rem; }
-    .avail-slots { flex: 1; display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
-    .avail-slot { display: inline-flex; align-items: center; gap: 0.25rem; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 0.125rem 0.5rem; border-radius: 1rem; font-size: 0.8rem; font-weight: 500; }
-    .btn-inline-delete { background: none; border: none; color: #999; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.125rem; }
-    .btn-inline-delete:hover { color: #ef4444; }
-    .card-header-row { display: flex; justify-content: space-between; align-items: flex-start; }
-    .card-actions { display: flex; gap: 0.5rem; align-items: center; flex-shrink: 0; }
-    .locations-section { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #f0f0f0; }
-    .location-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; margin-bottom: 0.25rem; border-radius: 0.25rem; }
-    .location-row:hover { background: #f9fafb; }
-    .toggle { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
-    .toggle input { width: 1rem; height: 1rem; }
-    .toggle-label { font-size: 0.8rem; color: #666; }
-    .btn { padding: 0.5rem 1rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 500; }
-    .btn-primary { background: #3b82f6; color: white; }
-    .btn-primary:hover { background: #2563eb; }
-    .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
-    .btn-secondary:hover { background: #e5e7eb; }
-    .btn-danger { background: none; color: #ef4444; border: none; cursor: pointer; font-size: 0.8rem; }
-    .btn-danger:hover { text-decoration: underline; }
-    .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
-    .form-group { margin-bottom: 0.75rem; }
-    .form-group label { display: block; font-size: 0.8rem; font-weight: 500; margin-bottom: 0.25rem; }
-    .form-group input, .form-group select { width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; }
-    .form-row { display: flex; gap: 0.75rem; }
-    .form-row > * { flex: 1; }
-    .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 50; justify-content: center; align-items: center; }
-    .modal.active { display: flex; }
-    .modal-content { background: white; border-radius: 0.75rem; padding: 1.5rem; width: 90%; max-width: 400px; }
-    .modal-title { font-weight: 600; margin-bottom: 1rem; }
-    .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
-    #toast { display: none; position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%); background: #065f46; color: white; padding: 0.75rem 1.5rem; border-radius: 0.5rem; font-size: 0.875rem; z-index: 100; }
-    #toast.show { display: block; }
-    .powered-by { text-align: center; margin-top: 3rem; color: #999; font-size: 0.8rem; }
-    .pac-container { z-index: 10000 !important; border-radius: 0.5rem; border: 1px solid #e5e7eb; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    .pac-item { padding: 0.5rem 0.75rem; font-size: 0.875rem; cursor: pointer; }
-    .pac-item:hover { background: #f3f4f6; }
-    .pac-item-selected { background: #eff6ff; }
-    .pac-icon { display: none; }
-    .pac-item-query { font-weight: 600; font-size: 0.875rem; }
-    .autocomplete-hint { font-size: 0.75rem; color: #9ca3af; margin-top: 0.25rem; }
+    ${baseStyles}
+    ${settingsStyles}
   </style>
 </head>
 <body>
