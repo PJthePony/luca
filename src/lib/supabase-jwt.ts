@@ -1,7 +1,7 @@
 import { jwtVerify } from "jose";
 import { env } from "../config.js";
 
-const secret = new TextEncoder().encode(env.SUPABASE_JWT_SECRET);
+const secret = Buffer.from(env.SUPABASE_JWT_SECRET, "base64");
 
 export async function verifySupabaseJwt(token: string) {
   const { payload } = await jwtVerify(token, secret, {
