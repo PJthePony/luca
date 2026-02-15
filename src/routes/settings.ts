@@ -393,7 +393,7 @@ function renderSettingsPage(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Settings - Luca</title>
+  <title>Luca Settings</title>
   ${fontLinks}
   ${googleMapsApiKey ? `<script async src="https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=places&loading=async"></script>` : ""}
   <style>
