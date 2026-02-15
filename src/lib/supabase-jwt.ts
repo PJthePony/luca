@@ -4,9 +4,7 @@ import { env } from "../config.js";
 const secret = Buffer.from(env.SUPABASE_JWT_SECRET, "base64");
 
 export async function verifySupabaseJwt(token: string) {
-  const { payload } = await jwtVerify(token, secret, {
-    algorithms: ["HS256"],
-  });
+  const { payload } = await jwtVerify(token, secret);
   return {
     sub: payload.sub as string,
     email: payload.email as string,
