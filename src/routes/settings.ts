@@ -747,7 +747,7 @@ export function renderSettingsBody(
 
     async function deleteAvailability(ruleId) {
       if (!confirm('Remove this availability window?')) return;
-      await fetch('/settings/' + userId + '/availability/' + ruleId + '/delete', { method: 'POST' });
+      await fetch('/settings/availability/' + ruleId + '/delete', { method: 'POST' });
       toast('Availability removed');
       setTimeout(() => location.reload(), 500);
     }
@@ -810,7 +810,7 @@ export function renderSettingsBody(
 
     async function deleteType(typeId) {
       if (!confirm('Delete this meeting type and all its locations?')) return;
-      await fetch('/settings/' + userId + '/meeting-types/' + typeId + '/delete', { method: 'POST' });
+      await fetch('/settings/meeting-types/' + typeId + '/delete', { method: 'POST' });
       toast('Meeting type deleted');
       setTimeout(() => location.reload(), 500);
     }
@@ -849,7 +849,7 @@ export function renderSettingsBody(
 
     async function deleteLocation(locationId) {
       if (!confirm('Remove this location?')) return;
-      await fetch('/settings/' + userId + '/locations/' + locationId + '/delete', { method: 'POST' });
+      await fetch('/settings/locations/' + locationId + '/delete', { method: 'POST' });
       toast('Location removed');
       setTimeout(() => location.reload(), 500);
     }
