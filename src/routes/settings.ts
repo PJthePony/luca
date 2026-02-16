@@ -11,6 +11,9 @@ import {
 import { listCalendars } from "../lib/google.js";
 import { env } from "../config.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { fetchSettingsData } from "../services/queries.js";
+import type { MeetingTypeWithLocations } from "../services/queries.js";
+import type { GoogleTokens } from "../types/index.js";
 import { fontLinks, baseStyles, settingsStyles, headerStyles, logoSvg } from "../lib/styles.js";
 
 type User = typeof users.$inferSelect;
@@ -24,67 +27,18 @@ settingsRoutes.use("*", authMiddleware);
 
 settingsRoutes.get("/", async (c) => {
   const user = c.get("user");
-  const userId = user.id;
+  const { calendars, types, rules } = await fetchSettingsData(user.id);
 
-  const calendars = await db.query.userCalendars.findMany({
-    where: eq(userCalendars.userId, userId),
-  });
-
-  const types = await db.query.meetingTypes.findMany({
-    where: eq(meetingTypes.userId, userId),
-  });
-
-  // Get locations for each in-person type
-  const typesWithLocations = await Promise.all(
-    types.map(async (t) => {
-      const locations = t.isOnline
-        ? []
-        : await db.query.meetingLocations.findMany({
-            where: eq(meetingLocations.meetingTypeId, t.id),
-            orderBy: (loc, { asc }) => [asc(loc.sortOrder)],
-          });
-      return { ...t, locations };
-    }),
-  );
-
-  const rules = await db.query.availabilityRules.findMany({
-    where: eq(availabilityRules.userId, userId),
-  });
-
-  return c.html(renderSettingsPage(user, calendars, typesWithLocations, rules, env.GOOGLE_MAPS_API_KEY));
+  return c.html(renderSettingsPage(user, calendars, types, rules, env.GOOGLE_MAPS_API_KEY));
 });
 
 // ── API: Settings Body (partial HTML for in-place refresh) ─────────────────
 
 settingsRoutes.get("/body", async (c) => {
   const user = c.get("user");
-  const userId = user.id;
+  const { calendars, types, rules } = await fetchSettingsData(user.id);
 
-  const calendars = await db.query.userCalendars.findMany({
-    where: eq(userCalendars.userId, userId),
-  });
-
-  const types = await db.query.meetingTypes.findMany({
-    where: eq(meetingTypes.userId, userId),
-  });
-
-  const typesWithLocations = await Promise.all(
-    types.map(async (t) => {
-      const locations = t.isOnline
-        ? []
-        : await db.query.meetingLocations.findMany({
-            where: eq(meetingLocations.meetingTypeId, t.id),
-            orderBy: (loc, { asc }) => [asc(loc.sortOrder)],
-          });
-      return { ...t, locations };
-    }),
-  );
-
-  const rules = await db.query.availabilityRules.findMany({
-    where: eq(availabilityRules.userId, userId),
-  });
-
-  return c.html(renderSettingsBody(user, calendars, typesWithLocations, rules, env.GOOGLE_MAPS_API_KEY));
+  return c.html(renderSettingsBody(user, calendars, types, rules, env.GOOGLE_MAPS_API_KEY));
 });
 
 // ── API: Refresh Calendars ──────────────────────────────────────────────────
@@ -97,10 +51,7 @@ settingsRoutes.post("/calendars/refresh", async (c) => {
     return c.json({ error: "No Google Calendar connected" }, 400);
   }
 
-  const tokens = user.googleTokens as {
-    access_token?: string | null;
-    refresh_token?: string | null;
-  };
+  const tokens = user.googleTokens as GoogleTokens;
 
   const calendars = await listCalendars(tokens);
 
@@ -413,10 +364,6 @@ settingsRoutes.post("/availability/:ruleId/delete", async (c) => {
 });
 
 // ── HTML Rendering ──────────────────────────────────────────────────────────
-
-export type MeetingTypeWithLocations = typeof meetingTypes.$inferSelect & {
-  locations: (typeof meetingLocations.$inferSelect)[];
-};
 
 /** Convert "HH:MM" or "HH:MM:SS" 24-hour time to 12-hour display (e.g. "9:00 AM"). */
 export function to12h(time: string | null | undefined): string {
@@ -1042,6 +989,7 @@ function renderSettingsPage(
   <header class="app-header">
     <a href="/" class="app-header-brand">
       ${logoSvg}
+      <span class="app-name">Luca</span>
     </a>
     <div class="app-header-nav">
       <button class="logout-btn" onclick="window.location.href='/auth/logout'">Sign out</button>

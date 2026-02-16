@@ -40,17 +40,6 @@ app.get("/", async (c) => {
     }
   }
 
-  // Legacy fallback: luca_user cookie
-  const legacyUserId = parseCookie(cookieHeader, "luca_user");
-  if (legacyUserId) {
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, legacyUserId),
-    });
-    if (user) {
-      return c.redirect("/dashboard");
-    }
-  }
-
   // Landing page for unauthenticated visitors
   return c.html(`<!DOCTYPE html>
 <html lang="en">

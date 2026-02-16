@@ -1,23 +1,25 @@
 import { Hono } from "hono";
-import { eq, desc, count as dbCount } from "drizzle-orm";
+import { eq, count as dbCount } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   users,
   meetings,
   participants,
-  proposedSlots,
   emailThreads,
   emailMessages,
-  userCalendars,
   meetingTypes,
   meetingLocations,
   availabilityRules,
+  userCalendars,
 } from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { cancelMeeting, startRescheduling, proposeTimes } from "../services/meeting-machine.js";
 import { sendThreadedReply } from "../services/email.js";
 import { findAvailableSlots } from "../services/slot-proposer.js";
 import { notifyUser } from "../services/notification.js";
+import { fetchMeetingsData, fetchSettingsData, getAttendeeEmails } from "../services/queries.js";
+import type { MeetingData, MeetingTypeWithLocations } from "../services/queries.js";
+import type { GoogleTokens } from "../types/index.js";
 import { env } from "../config.js";
 import {
   fontLinks,
@@ -46,74 +48,14 @@ dashboardRoutes.get("/", async (c) => {
   // Count total meetings
   const [{ total }] = await db.select({ total: dbCount() }).from(meetings).where(eq(meetings.organizerId, userId));
 
-  // Fetch first page of meetings
-  const userMeetings = await db.query.meetings.findMany({
-    where: eq(meetings.organizerId, userId),
-    orderBy: [desc(meetings.updatedAt)],
-    limit: PAGE_SIZE,
-  });
-
-  const meetingsData = await Promise.all(
-    userMeetings.map(async (m) => {
-      const [parts, slots, thread] = await Promise.all([
-        db.query.participants.findMany({
-          where: eq(participants.meetingId, m.id),
-        }),
-        db.query.proposedSlots.findMany({
-          where: eq(proposedSlots.meetingId, m.id),
-        }),
-        db.query.emailThreads.findFirst({
-          where: eq(emailThreads.meetingId, m.id),
-        }),
-      ]);
-
-      let messageCount = 0;
-      if (thread) {
-        const msgs = await db.query.emailMessages.findMany({
-          where: eq(emailMessages.threadId, thread.id),
-        });
-        messageCount = msgs.length;
-      }
-
-      // Get meeting type info
-      let meetingType: typeof meetingTypes.$inferSelect | null = null;
-      if (m.meetingTypeId) {
-        meetingType = (await db.query.meetingTypes.findFirst({
-          where: eq(meetingTypes.id, m.meetingTypeId),
-        })) ?? null;
-      }
-
-      return { meeting: m, participants: parts, slots, thread, messageCount, meetingType };
-    }),
-  );
-
-  // Fetch settings data for the settings modal
-  const calendars = await db.query.userCalendars.findMany({
-    where: eq(userCalendars.userId, userId),
-  });
-
-  const types = await db.query.meetingTypes.findMany({
-    where: eq(meetingTypes.userId, userId),
-  });
-
-  const typesWithLocations = await Promise.all(
-    types.map(async (t) => {
-      const locations = t.isOnline
-        ? []
-        : await db.query.meetingLocations.findMany({
-            where: eq(meetingLocations.meetingTypeId, t.id),
-            orderBy: (loc, { asc }) => [asc(loc.sortOrder)],
-          });
-      return { ...t, locations };
-    }),
-  );
-
-  const rules = await db.query.availabilityRules.findMany({
-    where: eq(availabilityRules.userId, userId),
-  });
+  // Fetch first page of meetings + settings data in parallel
+  const [meetingsData, settingsData] = await Promise.all([
+    fetchMeetingsData(userId, PAGE_SIZE),
+    fetchSettingsData(userId),
+  ]);
 
   const hasMore = total > PAGE_SIZE;
-  const html = renderDashboardPage(user, meetingsData, hasMore, calendars, typesWithLocations, rules, env.GOOGLE_MAPS_API_KEY);
+  const html = renderDashboardPage(user, meetingsData, hasMore, settingsData.calendars, settingsData.types, settingsData.rules, env.GOOGLE_MAPS_API_KEY);
   return c.html(html);
 });
 
@@ -126,46 +68,7 @@ dashboardRoutes.get("/meetings", async (c) => {
   const tz = user.timezone || "America/New_York";
 
   const [{ total }] = await db.select({ total: dbCount() }).from(meetings).where(eq(meetings.organizerId, userId));
-
-  const userMeetings = await db.query.meetings.findMany({
-    where: eq(meetings.organizerId, userId),
-    orderBy: [desc(meetings.updatedAt)],
-    limit: PAGE_SIZE,
-    offset,
-  });
-
-  const meetingsData = await Promise.all(
-    userMeetings.map(async (m) => {
-      const [parts, slots, thread] = await Promise.all([
-        db.query.participants.findMany({
-          where: eq(participants.meetingId, m.id),
-        }),
-        db.query.proposedSlots.findMany({
-          where: eq(proposedSlots.meetingId, m.id),
-        }),
-        db.query.emailThreads.findFirst({
-          where: eq(emailThreads.meetingId, m.id),
-        }),
-      ]);
-
-      let messageCount = 0;
-      if (thread) {
-        const msgs = await db.query.emailMessages.findMany({
-          where: eq(emailMessages.threadId, thread.id),
-        });
-        messageCount = msgs.length;
-      }
-
-      let meetingType: typeof meetingTypes.$inferSelect | null = null;
-      if (m.meetingTypeId) {
-        meetingType = (await db.query.meetingTypes.findFirst({
-          where: eq(meetingTypes.id, m.meetingTypeId),
-        })) ?? null;
-      }
-
-      return { meeting: m, participants: parts, slots, thread, messageCount, meetingType };
-    }),
-  );
+  const meetingsData = await fetchMeetingsData(userId, PAGE_SIZE, offset);
 
   const cardsHtml = meetingsData.map((d) => renderMeetingCard(d, tz)).join("\n");
   const hasMore = offset + PAGE_SIZE < total;
@@ -236,16 +139,17 @@ dashboardRoutes.post("/meetings/:meetingId/cancel", async (c) => {
     return c.json({ error: "Meeting is already cancelled" }, 400);
   }
 
-  const tokens = user.googleTokens as { access_token?: string | null; refresh_token?: string | null };
+  const tokens = user.googleTokens as GoogleTokens;
   if (!tokens) {
     return c.json({ error: "Calendar not connected" }, 400);
   }
 
   try {
     await cancelMeeting(meetingId, tokens);
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("cancelMeeting error:", e);
-    return c.json({ error: e.message ?? "Failed to cancel meeting" }, 500);
+    const message = e instanceof Error ? e.message : "Failed to cancel meeting";
+    return c.json({ error: message }, 500);
   }
 
   // Send cancellation email
@@ -255,12 +159,7 @@ dashboardRoutes.post("/meetings/:meetingId/cancel", async (c) => {
     });
 
     if (thread) {
-      const allParticipants = await db.query.participants.findMany({
-        where: eq(participants.meetingId, meetingId),
-      });
-      const replyTo = allParticipants
-        .filter((p) => p.role !== "organizer")
-        .map((p) => p.email);
+      const replyTo = await getAttendeeEmails(meetingId);
 
       const reasonLine = reason ? `\nReason: ${reason}\n` : "";
       await sendThreadedReply({
@@ -325,9 +224,10 @@ dashboardRoutes.post("/meetings/:meetingId/nudge", async (c) => {
     });
 
     return c.json({ status: "nudged", count: pendingParticipants.length });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("nudge error:", e);
-    return c.json({ error: e.message ?? "Failed to send nudge" }, 500);
+    const message = e instanceof Error ? e.message : "Failed to send nudge";
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -347,7 +247,7 @@ dashboardRoutes.post("/meetings/:meetingId/reschedule", async (c) => {
       return c.json({ error: "Not found" }, 404);
     }
 
-    const tokens = user.googleTokens as { access_token?: string | null; refresh_token?: string | null };
+    const tokens = user.googleTokens as GoogleTokens;
     if (!tokens) {
       return c.json({ error: "Calendar not connected" }, 400);
     }
@@ -379,12 +279,7 @@ dashboardRoutes.post("/meetings/:meetingId/reschedule", async (c) => {
       });
 
       if (thread) {
-        const allParticipants = await db.query.participants.findMany({
-          where: eq(participants.meetingId, meetingId),
-        });
-        const replyTo = allParticipants
-          .filter((p) => p.role !== "organizer")
-          .map((p) => p.email);
+        const replyTo = await getAttendeeEmails(meetingId);
 
         const tz = user.timezone || "America/New_York";
         const timeOptions = newSlots
@@ -412,9 +307,10 @@ dashboardRoutes.post("/meetings/:meetingId/reschedule", async (c) => {
     });
 
     return c.json({ status: "rescheduling", newSlots: newSlots.length });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("reschedule error:", e);
-    return c.json({ error: e.message ?? "Failed to reschedule meeting" }, 500);
+    const message = e instanceof Error ? e.message : "Failed to reschedule meeting";
+    return c.json({ error: message }, 500);
   }
 });
 
@@ -449,19 +345,6 @@ dashboardRoutes.post("/meetings/:meetingId/agenda", async (c) => {
 });
 
 // ── HTML Rendering ───────────────────────────────────────────────────────────
-
-interface MeetingData {
-  meeting: typeof meetings.$inferSelect;
-  participants: (typeof participants.$inferSelect)[];
-  slots: (typeof proposedSlots.$inferSelect)[];
-  thread: typeof emailThreads.$inferSelect | null | undefined;
-  messageCount: number;
-  meetingType: typeof meetingTypes.$inferSelect | null;
-}
-
-type MeetingTypeWithLocations = typeof meetingTypes.$inferSelect & {
-  locations: (typeof meetingLocations.$inferSelect)[];
-};
 
 function renderDashboardPage(
   user: typeof users.$inferSelect,
@@ -499,6 +382,7 @@ function renderDashboardPage(
   <header class="app-header">
     <a href="/" class="app-header-brand">
       ${logoSvg}
+      <span class="app-name">Luca</span>
     </a>
     <div class="app-header-nav">
       <button class="nav-btn" onclick="openSettingsModal()">Settings</button>
@@ -562,6 +446,11 @@ function renderDashboardPage(
   </div>
 
   <div id="toast"></div>
+
+  <footer style="padding:24px 32px;text-align:center;font-size:0.7rem;color:var(--nxb-color-text-muted, #94a3b8);border-top:1px solid var(--nxb-color-border, rgba(255,255,255,0.06));">
+    <a href="https://tanzillo.ai/privacy.html" target="_blank" style="color:inherit;text-decoration:none;margin-right:16px;">Privacy</a>
+    <a href="https://tanzillo.ai/terms.html" target="_blank" style="color:inherit;text-decoration:none;">Terms</a>
+  </footer>
 
   <script>
     // ── Utilities ──────────────────────

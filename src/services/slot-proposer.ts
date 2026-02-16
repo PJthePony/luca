@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, participants, availabilityRules, userCalendars, meetingTypes } from "../db/schema.js";
 import * as gcal from "../lib/google.js";
-import type { TimePreference } from "../types/index.js";
+import type { TimePreference, GoogleTokens } from "../types/index.js";
 
 interface ProposedSlot {
   start: Date;
@@ -88,10 +88,7 @@ export async function findAvailableSlots(
   );
 
   const freeBusyResults = await gcal.queryFreeBusy(
-    organizer.googleTokens as {
-      access_token?: string | null;
-      refresh_token?: string | null;
-    },
+    organizer.googleTokens as GoogleTokens,
     calendarIds,
     now,
     searchEnd,
@@ -165,7 +162,8 @@ function generateCandidateSlots(
   tomorrowLocal.setDate(tomorrowLocal.getDate() + 1);
 
   // Walk through each day in the search window
-  for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
+  const maxDays = Math.ceil((searchEnd.getTime() - searchStart.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  for (let dayOffset = 0; dayOffset < maxDays; dayOffset++) {
     const localDate = new Date(tomorrowLocal);
     localDate.setDate(localDate.getDate() + dayOffset);
 

@@ -1,8 +1,8 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { env } from "../config.js";
 
-const SUPABASE_URL = "https://jlkognkltdkzerzpcqpu.supabase.co";
 const JWKS = createRemoteJWKSet(
-  new URL(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
+  new URL(`${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
 );
 
 export async function verifySupabaseJwt(token: string) {

@@ -379,6 +379,11 @@ export const headerStyles = `
     color: var(--nxb-color-text);
   }
   .app-header-brand:hover { text-decoration: none; }
+  .app-name {
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
   .app-header-nav {
     display: flex;
     align-items: center;

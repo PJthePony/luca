@@ -1,5 +1,6 @@
 import { google, type calendar_v3 } from "googleapis";
 import { env } from "../config.js";
+import type { GoogleTokens } from "../types/index.js";
 
 const oauth2Client = new google.auth.OAuth2(
   env.GOOGLE_CLIENT_ID ?? "",
@@ -21,10 +22,7 @@ export async function exchangeCode(code: string) {
   return tokens;
 }
 
-function getCalendarClient(tokens: {
-  access_token?: string | null;
-  refresh_token?: string | null;
-}) {
+function getCalendarClient(tokens: GoogleTokens) {
   const client = new google.auth.OAuth2(
     env.GOOGLE_CLIENT_ID,
     env.GOOGLE_CLIENT_SECRET,
@@ -40,7 +38,7 @@ export interface FreeBusyResult {
 }
 
 export async function queryFreeBusy(
-  tokens: { access_token?: string | null; refresh_token?: string | null },
+  tokens: GoogleTokens,
   calendarIds: string[],
   timeMin: Date,
   timeMax: Date,
@@ -68,7 +66,7 @@ export async function queryFreeBusy(
 }
 
 export async function createTentativeEvent(
-  tokens: { access_token?: string | null; refresh_token?: string | null },
+  tokens: GoogleTokens,
   event: {
     summary: string;
     start: Date;
@@ -120,7 +118,7 @@ export async function createTentativeEvent(
 }
 
 export async function confirmEvent(
-  tokens: { access_token?: string | null; refresh_token?: string | null },
+  tokens: GoogleTokens,
   eventId: string,
   attendees?: string[],
   description?: string,
@@ -192,7 +190,7 @@ export interface CalendarListEntry {
  * List all calendars the user has access to.
  */
 export async function listCalendars(
-  tokens: { access_token?: string | null; refresh_token?: string | null },
+  tokens: GoogleTokens,
 ): Promise<CalendarListEntry[]> {
   const calendar = getCalendarClient(tokens);
 
@@ -213,7 +211,7 @@ export async function listCalendars(
  * No meeting details are shared — just a busy block.
  */
 export async function createBusyHold(
-  tokens: { access_token?: string | null; refresh_token?: string | null },
+  tokens: GoogleTokens,
   event: { start: Date; end: Date; workEmail: string; timeZone?: string },
 ): Promise<string> {
   const calendar = getCalendarClient(tokens);
@@ -237,7 +235,7 @@ export async function createBusyHold(
 }
 
 export async function deleteEvent(
-  tokens: { access_token?: string | null; refresh_token?: string | null },
+  tokens: GoogleTokens,
   eventId: string,
 ): Promise<void> {
   const calendar = getCalendarClient(tokens);

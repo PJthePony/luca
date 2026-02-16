@@ -1,10 +1,9 @@
 import dotenv from "dotenv";
-dotenv.config({ override: true });
+dotenv.config();
 import { z } from "zod";
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
-  REDIS_URL: z.string().url().optional(),
   MAILGUN_API_KEY: z.string().min(1),
   MAILGUN_DOMAIN: z.string().min(1),
   MAILGUN_WEBHOOK_SIGNING_KEY: z.string().min(1),
@@ -13,7 +12,7 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
   GOOGLE_MAPS_API_KEY: z.string().min(1).optional(),
-  SUPABASE_JWT_SECRET: z.string().min(1).optional(), // Legacy: now using JWKS
+  SUPABASE_URL: z.string().url().default("https://jlkognkltdkzerzpcqpu.supabase.co"),
   IMESSAGE_GATEWAY_URL: z.string().url().optional(),
   TESSIO_API_URL: z.string().url(),
   TESSIO_API_KEY: z.string().startsWith("nb_"),

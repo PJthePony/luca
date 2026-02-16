@@ -4,12 +4,25 @@ import { db } from "../db/index.js";
 import { users, userCalendars } from "../db/schema.js";
 import { getAuthUrl, exchangeCode, listCalendars } from "../lib/google.js";
 import { verifySupabaseJwt, parseCookie } from "../lib/supabase-jwt.js";
+import type { GoogleTokens } from "../types/index.js";
 import { seedDefaults } from "../lib/seed-defaults.js";
 
 export const authRoutes = new Hono();
 
 const COOKIE_OPTS = "Domain=.tanzillo.ai; Path=/; HttpOnly; Secure; SameSite=Lax";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+
+const ALLOWED_ORIGINS = [
+  "https://tessio.tanzillo.ai",
+  "https://genco.tanzillo.ai",
+];
+
+function getAllowedOrigin(requestOrigin: string | undefined): string {
+  if (requestOrigin && ALLOWED_ORIGINS.includes(requestOrigin)) {
+    return requestOrigin;
+  }
+  return ALLOWED_ORIGINS[0];
+}
 
 // ── Supabase Session Exchange ───────────────────────────────────────────────
 
@@ -92,7 +105,7 @@ authRoutes.get("/session", async (c) => {
  * Called by Tessio on TOKEN_REFRESHED events via fetch with credentials.
  */
 authRoutes.options("/session/refresh", (c) => {
-  c.header("Access-Control-Allow-Origin", "https://tessio.tanzillo.ai");
+  c.header("Access-Control-Allow-Origin", getAllowedOrigin(c.req.header("origin")));
   c.header("Access-Control-Allow-Credentials", "true");
   c.header("Access-Control-Allow-Methods", "POST");
   c.header("Access-Control-Allow-Headers", "Content-Type");
@@ -100,7 +113,7 @@ authRoutes.options("/session/refresh", (c) => {
 });
 
 authRoutes.post("/session/refresh", async (c) => {
-  c.header("Access-Control-Allow-Origin", "https://tessio.tanzillo.ai");
+  c.header("Access-Control-Allow-Origin", getAllowedOrigin(c.req.header("origin")));
   c.header("Access-Control-Allow-Credentials", "true");
 
   const { token, refresh } = await c.req.json<{ token: string; refresh: string }>();
@@ -141,10 +154,6 @@ authRoutes.get("/logout", (c) => {
 
   c.header("Set-Cookie", `sb_access_token=; ${clearOpts}`, { append: true });
   c.header("Set-Cookie", `sb_refresh_token=; ${clearOpts}`, { append: true });
-  // Also clear legacy cookie
-  c.header("Set-Cookie", `luca_user=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`, {
-    append: true,
-  });
 
   return c.redirect(returnTo);
 });
@@ -185,10 +194,7 @@ authRoutes.get("/google/callback", async (c) => {
 
   // Auto-sync all user calendars (all enabled for conflict checking by default)
   try {
-    const calendars = await listCalendars(tokens as {
-      access_token?: string | null;
-      refresh_token?: string | null;
-    });
+    const calendars = await listCalendars(tokens as GoogleTokens);
 
     for (const cal of calendars) {
       await db

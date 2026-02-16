@@ -1,7 +1,8 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { meetings, proposedSlots, participants, meetingTypes, users } from "../db/schema.js";
 import { MeetingStatus } from "../types/index.js";
+import type { GoogleTokens } from "../types/index.js";
 import * as gcal from "../lib/google.js";
 
 // Valid state transitions
@@ -43,7 +44,7 @@ async function getWorkEmail(organizerId: string): Promise<string | null> {
 export async function proposeTimes(
   meetingId: string,
   slots: { start: Date; end: Date }[],
-  organizerTokens: { access_token?: string | null; refresh_token?: string | null },
+  organizerTokens: GoogleTokens,
   meetingTitle: string,
   description?: string,
   options?: { addGoogleMeet?: boolean; location?: string; timeZone?: string },
@@ -135,7 +136,7 @@ export async function proposeTimes(
 export async function confirmSlot(
   meetingId: string,
   slotId: string,
-  organizerTokens: { access_token?: string | null; refresh_token?: string | null },
+  organizerTokens: GoogleTokens,
 ): Promise<typeof proposedSlots.$inferSelect> {
   return await db.transaction(async (tx) => {
     const [meeting] = await tx
@@ -262,7 +263,7 @@ export async function confirmSlot(
  */
 export async function startRescheduling(
   meetingId: string,
-  organizerTokens: { access_token?: string | null; refresh_token?: string | null },
+  organizerTokens: GoogleTokens,
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const [meeting] = await tx
@@ -329,7 +330,7 @@ export async function startRescheduling(
  */
 export async function cancelMeeting(
   meetingId: string,
-  organizerTokens: { access_token?: string | null; refresh_token?: string | null },
+  organizerTokens: GoogleTokens,
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const [meeting] = await tx
