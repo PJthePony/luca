@@ -54,6 +54,39 @@ settingsRoutes.get("/", async (c) => {
   return c.html(renderSettingsPage(user, calendars, typesWithLocations, rules, env.GOOGLE_MAPS_API_KEY));
 });
 
+// ── API: Settings Body (partial HTML for in-place refresh) ─────────────────
+
+settingsRoutes.get("/body", async (c) => {
+  const user = c.get("user");
+  const userId = user.id;
+
+  const calendars = await db.query.userCalendars.findMany({
+    where: eq(userCalendars.userId, userId),
+  });
+
+  const types = await db.query.meetingTypes.findMany({
+    where: eq(meetingTypes.userId, userId),
+  });
+
+  const typesWithLocations = await Promise.all(
+    types.map(async (t) => {
+      const locations = t.isOnline
+        ? []
+        : await db.query.meetingLocations.findMany({
+            where: eq(meetingLocations.meetingTypeId, t.id),
+            orderBy: (loc, { asc }) => [asc(loc.sortOrder)],
+          });
+      return { ...t, locations };
+    }),
+  );
+
+  const rules = await db.query.availabilityRules.findMany({
+    where: eq(availabilityRules.userId, userId),
+  });
+
+  return c.html(renderSettingsBody(user, calendars, typesWithLocations, rules, env.GOOGLE_MAPS_API_KEY));
+});
+
 // ── API: Refresh Calendars ──────────────────────────────────────────────────
 
 settingsRoutes.post("/calendars/refresh", async (c) => {
@@ -640,6 +673,21 @@ export function renderSettingsBody(
       document.getElementById(id).classList.remove('active');
     }
 
+    async function refreshSettings() {
+      const res = await fetch('/settings/body');
+      const html = await res.text();
+      // Find the settings container: modal-body on dashboard, .container on standalone page
+      const container = document.querySelector('#settingsModal .modal-body') || document.querySelector('.container');
+      if (!container) return;
+      container.innerHTML = html;
+      // Re-execute inline scripts from the new content
+      container.querySelectorAll('script').forEach(old => {
+        const s = document.createElement('script');
+        s.textContent = old.textContent;
+        old.replaceWith(s);
+      });
+    }
+
     document.querySelectorAll('.modal').forEach(m => {
       m.addEventListener('click', (e) => {
         if (e.target === m) closeModal(m.id);
@@ -659,7 +707,7 @@ export function renderSettingsBody(
         });
         if (res.ok) {
           toast('Timezone updated');
-          setTimeout(() => location.reload(), 500);
+          refreshSettings();
         } else {
           const data = await res.json();
           toast('Error: ' + (data.error || 'Failed'));
@@ -677,7 +725,7 @@ export function renderSettingsBody(
         const data = await res.json();
         if (res.ok) {
           toast('Calendars refreshed (' + data.count + ' found)');
-          setTimeout(() => location.reload(), 1000);
+          refreshSettings();
         } else {
           toast('Error: ' + (data.error || 'Failed to refresh'));
         }
@@ -713,7 +761,7 @@ export function renderSettingsBody(
       });
       document.getElementById('workEmail').value = '';
       toast('Work email removed');
-      setTimeout(() => location.reload(), 500);
+      refreshSettings();
     }
 
     // ── Availability ──────────────
@@ -742,14 +790,14 @@ export function renderSettingsBody(
 
       closeModal('availModal');
       toast('Availability saved');
-      setTimeout(() => location.reload(), 500);
+      refreshSettings();
     }
 
     async function deleteAvailability(ruleId) {
       if (!confirm('Remove this availability window?')) return;
       await fetch('/settings/availability/' + ruleId + '/delete', { method: 'POST' });
       toast('Availability removed');
-      setTimeout(() => location.reload(), 500);
+      refreshSettings();
     }
 
     // ── Meeting Types ──────────────
@@ -805,14 +853,14 @@ export function renderSettingsBody(
 
       closeModal('typeModal');
       toast('Meeting type saved');
-      setTimeout(() => location.reload(), 500);
+      refreshSettings();
     }
 
     async function deleteType(typeId) {
       if (!confirm('Delete this meeting type and all its locations?')) return;
       await fetch('/settings/meeting-types/' + typeId + '/delete', { method: 'POST' });
       toast('Meeting type deleted');
-      setTimeout(() => location.reload(), 500);
+      refreshSettings();
     }
 
     // ── Locations ──────────────────
@@ -844,14 +892,14 @@ export function renderSettingsBody(
 
       closeModal('locationModal');
       toast('Location added');
-      setTimeout(() => location.reload(), 500);
+      refreshSettings();
     }
 
     async function deleteLocation(locationId) {
       if (!confirm('Remove this location?')) return;
       await fetch('/settings/locations/' + locationId + '/delete', { method: 'POST' });
       toast('Location removed');
-      setTimeout(() => location.reload(), 500);
+      refreshSettings();
     }
 
     // ── Google Places Autocomplete ──
