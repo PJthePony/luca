@@ -76,6 +76,10 @@ app.get("/", async (c) => {
     </div>
     <a href="/join" class="cta-btn">Get Started</a>
     <div class="email-badge">luca@tanzillo.ai</div>
+    <div style="margin-top:48px;display:flex;gap:16px;justify-content:center;font-size:0.7rem;">
+      <a href="https://tanzillo.ai/privacy.html" style="color:var(--nxb-color-text-muted, #94a3b8);text-decoration:none;">Privacy Policy</a>
+      <a href="https://tanzillo.ai/terms.html" style="color:var(--nxb-color-text-muted, #94a3b8);text-decoration:none;">Terms of Service</a>
+    </div>
   </div>
 </body>
 </html>`);
