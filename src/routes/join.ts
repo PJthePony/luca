@@ -9,21 +9,21 @@ export const joinRoutes = new Hono();
 
 /**
  * GET /join — Auto-create Luca user from Supabase session, then redirect to Google OAuth.
- * If not authenticated, redirect to Nexbite login.
+ * If not authenticated, redirect to Tessio login.
  */
 joinRoutes.get("/", async (c) => {
   const cookieHeader = c.req.header("cookie");
   const token = parseCookie(cookieHeader, "sb_access_token");
 
   if (!token) {
-    return c.redirect("https://tasks.tanzillo.ai/login");
+    return c.redirect("https://tessio.tanzillo.ai/login");
   }
 
   let payload;
   try {
     payload = await verifySupabaseJwt(token);
   } catch {
-    return c.redirect("https://tasks.tanzillo.ai/login");
+    return c.redirect("https://tessio.tanzillo.ai/login");
   }
 
   // Check if user already exists

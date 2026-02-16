@@ -15,8 +15,8 @@ const envSchema = z.object({
   GOOGLE_MAPS_API_KEY: z.string().min(1).optional(),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(), // Legacy: now using JWKS
   IMESSAGE_GATEWAY_URL: z.string().url().optional(),
-  NEXBITE_API_URL: z.string().url(),
-  NEXBITE_API_KEY: z.string().startsWith("nb_"),
+  TESSIO_API_URL: z.string().url(),
+  TESSIO_API_KEY: z.string().startsWith("nb_"),
   PORT: z.coerce.number().default(3000),
   APP_URL: z.string().url().default("http://localhost:3000"),
   NODE_ENV: z

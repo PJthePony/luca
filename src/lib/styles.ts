@@ -1,7 +1,7 @@
 /**
- * NexBite Design System — inline CSS for server-rendered pages.
+ * Tessio Design System — inline CSS for server-rendered pages.
  *
- * This mirrors the tokens from nexbite-ds/ so that Luca's pages
+ * This mirrors the tokens from tessio-ds/ so that Luca's pages
  * share the same visual language as the other apps.
  * Font: IBM Plex Sans (loaded via Google Fonts <link>).
  */
@@ -13,7 +13,7 @@ export const fontLinks = `
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">`;
 
-/** Inline SVG of the pjt monogram logo — shared with NexBite. */
+/** Inline SVG of the pjt monogram logo — shared with Tessio. */
 export const logoSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 616 592" width="40" height="38">
 <path fill="#475569" d="
 M119.109314,268.061066
@@ -363,7 +363,7 @@ export const baseStyles = `
     .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
   }`;
 
-/** Shared app header/nav styles — Nexbite topbar pattern. */
+/** Shared app header/nav styles — Tessio topbar pattern. */
 export const headerStyles = `
   .app-header {
     display: flex;

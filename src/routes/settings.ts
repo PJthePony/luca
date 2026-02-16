@@ -145,9 +145,10 @@ settingsRoutes.post("/calendars/refresh", async (c) => {
 
 settingsRoutes.post("/calendars/:calendarDbId/toggle", async (c) => {
   const { calendarDbId } = c.req.param();
+  const userId = c.get("user").id;
 
   const cal = await db.query.userCalendars.findFirst({
-    where: eq(userCalendars.id, calendarDbId),
+    where: and(eq(userCalendars.id, calendarDbId), eq(userCalendars.userId, userId)),
   });
 
   if (!cal) {
@@ -179,7 +180,14 @@ settingsRoutes.post("/meeting-types", async (c) => {
   }>();
 
   if (body.id) {
-    // Update existing
+    // Update existing — verify ownership
+    const existing = await db.query.meetingTypes.findFirst({
+      where: and(eq(meetingTypes.id, body.id), eq(meetingTypes.userId, userId)),
+    });
+    if (!existing) {
+      return c.json({ error: "Meeting type not found" }, 404);
+    }
+
     await db
       .update(meetingTypes)
       .set({
@@ -226,6 +234,15 @@ settingsRoutes.post("/meeting-types", async (c) => {
 
 settingsRoutes.post("/meeting-types/:typeId/delete", async (c) => {
   const { typeId } = c.req.param();
+  const userId = c.get("user").id;
+
+  // Verify ownership
+  const existing = await db.query.meetingTypes.findFirst({
+    where: and(eq(meetingTypes.id, typeId), eq(meetingTypes.userId, userId)),
+  });
+  if (!existing) {
+    return c.json({ error: "Meeting type not found" }, 404);
+  }
 
   // Delete associated locations first
   await db.delete(meetingLocations).where(eq(meetingLocations.meetingTypeId, typeId));
@@ -237,6 +254,7 @@ settingsRoutes.post("/meeting-types/:typeId/delete", async (c) => {
 // ── API: Create/Update Location ─────────────────────────────────────────────
 
 settingsRoutes.post("/locations", async (c) => {
+  const userId = c.get("user").id;
   const body = await c.req.json<{
     id?: string;
     meetingTypeId: string;
@@ -245,6 +263,14 @@ settingsRoutes.post("/locations", async (c) => {
     notes?: string;
     sortOrder?: number;
   }>();
+
+  // Verify the meeting type belongs to the user
+  const ownerType = await db.query.meetingTypes.findFirst({
+    where: and(eq(meetingTypes.id, body.meetingTypeId), eq(meetingTypes.userId, userId)),
+  });
+  if (!ownerType) {
+    return c.json({ error: "Meeting type not found" }, 404);
+  }
 
   if (body.id) {
     await db
@@ -277,6 +303,21 @@ settingsRoutes.post("/locations", async (c) => {
 
 settingsRoutes.post("/locations/:locationId/delete", async (c) => {
   const { locationId } = c.req.param();
+  const userId = c.get("user").id;
+
+  // Verify ownership through the meeting type
+  const location = await db.query.meetingLocations.findFirst({
+    where: eq(meetingLocations.id, locationId),
+  });
+  if (location) {
+    const ownerType = await db.query.meetingTypes.findFirst({
+      where: and(eq(meetingTypes.id, location.meetingTypeId), eq(meetingTypes.userId, userId)),
+    });
+    if (!ownerType) {
+      return c.json({ error: "Location not found" }, 404);
+    }
+  }
+
   await db.delete(meetingLocations).where(eq(meetingLocations.id, locationId));
   return c.json({ status: "deleted" });
 });
@@ -357,6 +398,16 @@ settingsRoutes.post("/availability", async (c) => {
 
 settingsRoutes.post("/availability/:ruleId/delete", async (c) => {
   const { ruleId } = c.req.param();
+  const userId = c.get("user").id;
+
+  // Verify ownership
+  const rule = await db.query.availabilityRules.findFirst({
+    where: and(eq(availabilityRules.id, ruleId), eq(availabilityRules.userId, userId)),
+  });
+  if (!rule) {
+    return c.json({ error: "Availability rule not found" }, 404);
+  }
+
   await db.delete(availabilityRules).where(eq(availabilityRules.id, ruleId));
   return c.json({ status: "deleted" });
 });

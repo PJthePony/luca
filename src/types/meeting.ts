@@ -1,3 +1,9 @@
+/** Google OAuth tokens stored as JSONB on the user record. */
+export interface GoogleTokens {
+  access_token?: string | null;
+  refresh_token?: string | null;
+}
+
 export enum MeetingStatus {
   DRAFT = "draft",
   PROPOSED = "proposed",

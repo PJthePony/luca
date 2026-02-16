@@ -17,12 +17,12 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
  * Set shared auth cookies from a Supabase session.
  * GET /auth/session?token=<jwt>&refresh=<rt>&returnTo=<url>
  *
- * Called by Nexbite after magic-link login to sync the session to .tanzillo.ai cookies.
+ * Called by Tessio after magic-link login to sync the session to .tanzillo.ai cookies.
  */
 authRoutes.get("/session", async (c) => {
   const token = c.req.query("token");
   const refreshToken = c.req.query("refresh");
-  const returnTo = c.req.query("returnTo") || "https://tasks.tanzillo.ai";
+  const returnTo = c.req.query("returnTo") || "https://tessio.tanzillo.ai";
 
   if (!token) {
     return c.text("Missing token parameter", 400);
@@ -89,10 +89,10 @@ authRoutes.get("/session", async (c) => {
  * Silently refresh the shared auth cookies.
  * POST /auth/session/refresh { token, refresh }
  *
- * Called by Nexbite on TOKEN_REFRESHED events via fetch with credentials.
+ * Called by Tessio on TOKEN_REFRESHED events via fetch with credentials.
  */
 authRoutes.options("/session/refresh", (c) => {
-  c.header("Access-Control-Allow-Origin", "https://tasks.tanzillo.ai");
+  c.header("Access-Control-Allow-Origin", "https://tessio.tanzillo.ai");
   c.header("Access-Control-Allow-Credentials", "true");
   c.header("Access-Control-Allow-Methods", "POST");
   c.header("Access-Control-Allow-Headers", "Content-Type");
@@ -100,7 +100,7 @@ authRoutes.options("/session/refresh", (c) => {
 });
 
 authRoutes.post("/session/refresh", async (c) => {
-  c.header("Access-Control-Allow-Origin", "https://tasks.tanzillo.ai");
+  c.header("Access-Control-Allow-Origin", "https://tessio.tanzillo.ai");
   c.header("Access-Control-Allow-Credentials", "true");
 
   const { token, refresh } = await c.req.json<{ token: string; refresh: string }>();
@@ -136,7 +136,7 @@ authRoutes.post("/session/refresh", async (c) => {
  * GET /auth/logout?returnTo=<url>
  */
 authRoutes.get("/logout", (c) => {
-  const returnTo = c.req.query("returnTo") || "https://tasks.tanzillo.ai/login";
+  const returnTo = c.req.query("returnTo") || "https://tessio.tanzillo.ai/login";
   const clearOpts = `${COOKIE_OPTS}; Max-Age=0`;
 
   c.header("Set-Cookie", `sb_access_token=; ${clearOpts}`, { append: true });

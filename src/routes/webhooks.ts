@@ -14,7 +14,7 @@ import { findAvailableSlots } from "../services/slot-proposer.js";
 import * as machine from "../services/meeting-machine.js";
 import { notifyUser } from "../services/notification.js";
 import { parseTaskEmail } from "../lib/claude.js";
-import { createNexbiteTask } from "../lib/nexbite.js";
+import { createTessioTask } from "../lib/tessio.js";
 import { EmailDirection } from "../types/index.js";
 import { env } from "../config.js";
 
@@ -126,8 +126,8 @@ webhookRoutes.post("/inbound", async (c) => {
 
     console.log("Task parsed:", JSON.stringify(parsed));
 
-    // Create the task in Nexbite
-    const task = await createNexbiteTask({
+    // Create the task in Tessio
+    const task = await createTessioTask({
       title: parsed.task_title,
       notes: parsed.task_notes,
       location: parsed.task_location,
@@ -135,7 +135,7 @@ webhookRoutes.post("/inbound", async (c) => {
       activate_at: parsed.task_activate_at,
     });
 
-    console.log("Created Nexbite task:", JSON.stringify(task));
+    console.log("Created Tessio task:", JSON.stringify(task));
 
     // Reply to the sender with confirmation
     await sendEmail({
@@ -634,6 +634,6 @@ webhookRoutes.post("/inbound", async (c) => {
     console.error("=== WEBHOOK ERROR ===");
     console.error("Error:", err);
     console.error("Stack:", err instanceof Error ? err.stack : "no stack");
-    return c.json({ status: "error", message: String(err) }, 500);
+    return c.json({ status: "error", message: "Internal server error" }, 500);
   }
 });

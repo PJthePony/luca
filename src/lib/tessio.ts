@@ -16,14 +16,14 @@ export interface CreateTaskResult {
   created_at: number;
 }
 
-export async function createNexbiteTask(
+export async function createTessioTask(
   params: CreateTaskParams,
 ): Promise<CreateTaskResult> {
-  const response = await fetch(env.NEXBITE_API_URL, {
+  const response = await fetch(env.TESSIO_API_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${env.NEXBITE_API_KEY}`,
+      Authorization: `Bearer ${env.TESSIO_API_KEY}`,
     },
     body: JSON.stringify({
       title: params.title,
@@ -39,7 +39,7 @@ export async function createNexbiteTask(
       .json()
       .catch(() => ({ error: "Unknown error" }));
     throw new Error(
-      `Nexbite API error (${response.status}): ${JSON.stringify(error)}`,
+      `Tessio API error (${response.status}): ${JSON.stringify(error)}`,
     );
   }
 
