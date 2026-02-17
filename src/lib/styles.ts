@@ -387,38 +387,26 @@ export const headerStyles = `
   .app-header-nav {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 6px;
   }
-  .nav-btn {
-    padding: 6px 14px;
-    font-size: 0.78rem;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    color: var(--nxb-color-text-secondary);
-    background: transparent;
-    border: 1px solid var(--nxb-color-border);
+  .header-btn {
+    width: 34px;
+    height: 34px;
     border-radius: var(--nxb-radius-md);
+    border: 1px solid var(--nxb-color-border);
+    background: var(--nxb-color-surface);
+    color: var(--nxb-color-text-secondary);
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     transition: all var(--nxb-transition-fast);
+    -webkit-tap-highlight-color: transparent;
   }
-  .nav-btn:hover {
-    background: var(--nxb-color-primary-ghost);
-    border-color: var(--nxb-color-primary);
+  .header-btn:hover,
+  .header-btn:active {
+    background: var(--nxb-color-bg);
     color: var(--nxb-color-text);
-  }
-  .logout-btn {
-    padding: 6px 14px;
-    font-size: 0.78rem;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    color: var(--nxb-color-text-muted);
-    background: none;
-    border: none;
-    cursor: pointer;
-    transition: color var(--nxb-transition-fast);
-  }
-  .logout-btn:hover {
-    color: var(--nxb-color-accent);
   }
   @media (max-width: 600px) {
     .app-header { padding: 20px 24px; }
