@@ -16,6 +16,7 @@ const ALLOWED_ORIGINS = [
   "https://tessio.tanzillo.ai",
   "https://genco.tanzillo.ai",
   "https://luca.tanzillo.ai",
+  "https://apollonia.tanzillo.ai",
 ];
 
 function getAllowedOrigin(requestOrigin: string | undefined): string {
