@@ -184,7 +184,7 @@ export async function confirmSlot(
         where: eq(meetingTypes.id, meeting.meetingTypeId),
       });
       if (mType) {
-        if (mType.isOnline && mType.slug === "video_call") {
+        if (mType.addGoogleMeet) {
           isVideoCall = true;
         }
         // Fall back to meeting type's default location if meeting has none

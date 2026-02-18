@@ -91,14 +91,18 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
         effectiveDuration = matchedType.defaultDuration;
       }
 
-      // Build meeting title: "Lunch: P.J./Nicole"
+      // Build meeting title: "Coffee for P.J. and Christina"
       const participantNames = allParticipants
         .filter((p) => p.role !== "organizer")
         .map((p) => {
           if (p.name) return p.name.split(/\s+/)[0];
           return p.email.split("@")[0];
         });
-      const meetingTitle = `${matchedType.name}: ${organizer.name.split(/\s+/)[0]}/${participantNames.join("/")}`;
+      const allNames = [organizer.name.split(/\s+/)[0], ...participantNames];
+      const nameList = allNames.length <= 2
+        ? allNames.join(" and ")
+        : allNames.slice(0, -1).join(", ") + " and " + allNames[allNames.length - 1];
+      const meetingTitle = `${matchedType.name} for ${nameList}`;
 
       const meetingUpdate: Record<string, unknown> = {
         meetingTypeId: matchedType.id,
@@ -126,7 +130,11 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
         if (p.name) return p.name.split(/\s+/)[0];
         return p.email.split("@")[0];
       });
-    const fallbackTitle = `Meeting: ${organizer.name.split(/\s+/)[0]}/${participantNames.join("/")}`;
+    const allNames = [organizer.name.split(/\s+/)[0], ...participantNames];
+    const nameList = allNames.length <= 2
+      ? allNames.join(" and ")
+      : allNames.slice(0, -1).join(", ") + " and " + allNames[allNames.length - 1];
+    const fallbackTitle = `Meeting for ${nameList}`;
     meeting.title = fallbackTitle;
     await db
       .update(meetings)
@@ -161,8 +169,8 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
       })) ?? undefined
     : undefined;
 
-  const isVideoCall = resolvedType?.slug === "video_call" && resolvedType?.isOnline;
-  const isPhoneCall = resolvedType?.slug === "phone_call";
+  const isVideoCall = resolvedType?.addGoogleMeet ?? false;
+  const isPhoneCall = resolvedType?.collectPhoneNumber ?? false;
 
   // Create tentative holds and transition to PROPOSED
   const proposeResult = await machine.proposeTimes(

@@ -1,0 +1,1 @@
+ALTER TABLE "meeting_types" ADD COLUMN "add_google_meet" boolean DEFAULT false NOT NULL;

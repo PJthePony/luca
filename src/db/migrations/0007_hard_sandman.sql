@@ -1,0 +1,1 @@
+ALTER TABLE "meeting_types" ADD COLUMN "collect_phone_number" boolean DEFAULT false NOT NULL;

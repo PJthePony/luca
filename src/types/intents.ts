@@ -44,6 +44,7 @@ export interface ParsedEmail {
   response_draft: string;
   meeting_context_summary?: string;
   agenda_items?: string[];
+  phone_number?: string;
   task_title?: string;
   task_notes?: string;
   task_location?: string;

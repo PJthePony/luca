@@ -253,15 +253,22 @@ async function storeInboundMessage(
   });
 }
 
-/** Update meeting with context summary and agenda items from AI parsing. */
+/** Update meeting with context summary, agenda items, and phone number from AI parsing. */
 async function updateMeetingContext(
   meeting: typeof meetings.$inferSelect,
-  parsed: { meeting_context_summary?: string; agenda_items?: string[] },
+  parsed: { meeting_context_summary?: string; agenda_items?: string[]; phone_number?: string },
 ) {
   const meetingUpdates: Record<string, unknown> = { updatedAt: new Date() };
 
   if (parsed.meeting_context_summary && !meeting.notes) {
     meetingUpdates.notes = parsed.meeting_context_summary;
+  }
+
+  // Append phone number to the meeting notes so it appears in the calendar description
+  if (parsed.phone_number) {
+    const phoneNote = `Phone: ${parsed.phone_number}`;
+    const currentNotes = (meetingUpdates.notes as string) ?? meeting.notes ?? "";
+    meetingUpdates.notes = currentNotes ? `${currentNotes}\n\n${phoneNote}` : phoneNote;
   }
 
   if (parsed.agenda_items && parsed.agenda_items.length > 0) {

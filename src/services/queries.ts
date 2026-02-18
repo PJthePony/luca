@@ -124,11 +124,11 @@ export async function getAttendeeEmails(meetingId: string): Promise<string[]> {
     .map((p) => p.email);
 }
 
-/** Check if a meeting type is a video call (needs Google Meet). */
+/** Check if a meeting type has Google Meet enabled. */
 export async function isVideoCallType(meetingTypeId: string | null | undefined): Promise<boolean> {
   if (!meetingTypeId) return false;
   const mType = await db.query.meetingTypes.findFirst({
     where: eq(meetingTypes.id, meetingTypeId),
   });
-  return !!(mType?.slug === "video_call" && mType?.isOnline);
+  return mType?.addGoogleMeet ?? false;
 }

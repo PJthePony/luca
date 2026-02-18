@@ -128,6 +128,8 @@ settingsRoutes.post("/meeting-types", async (c) => {
     earliestTime?: string;
     latestTime?: string;
     isDefault?: boolean;
+    addGoogleMeet?: boolean;
+    collectPhoneNumber?: boolean;
   }>();
 
   if (body.id) {
@@ -150,6 +152,8 @@ settingsRoutes.post("/meeting-types", async (c) => {
         earliestTime: body.earliestTime ?? null,
         latestTime: body.latestTime ?? null,
         isDefault: body.isDefault ?? false,
+        addGoogleMeet: body.addGoogleMeet ?? false,
+        collectPhoneNumber: body.collectPhoneNumber ?? false,
       })
       .where(eq(meetingTypes.id, body.id));
     return c.json({ status: "updated" });
@@ -175,6 +179,8 @@ settingsRoutes.post("/meeting-types", async (c) => {
       earliestTime: body.earliestTime ?? null,
       latestTime: body.latestTime ?? null,
       isDefault: body.isDefault ?? false,
+      addGoogleMeet: body.addGoogleMeet ?? false,
+      collectPhoneNumber: body.collectPhoneNumber ?? false,
     })
     .returning();
 
@@ -441,9 +447,11 @@ export function renderSettingsBody(
               <strong>${t.name}</strong>
               ${t.isDefault ? '<span class="badge default">Default</span>' : ""}
               <span class="badge ${t.isOnline ? "online" : "in-person"}">${t.isOnline ? "Online" : "In-person"}</span>
+              ${t.addGoogleMeet ? '<span class="badge online">Google Meet</span>' : ""}
+              ${t.collectPhoneNumber ? '<span class="badge">Phone #</span>' : ""}
             </div>
             <div class="card-actions">
-              <button class="btn-secondary btn-sm" onclick="showEditType('${t.id}', '${t.name.replace(/'/g, "\\'")}', '${t.slug}', ${t.defaultDuration}, ${t.isOnline}, '${(t.defaultLocation ?? "").replace(/'/g, "\\'")}', ${t.isDefault}, '${t.earliestTime?.slice(0, 5) ?? ""}', '${t.latestTime?.slice(0, 5) ?? ""}')">Edit</button>
+              <button class="btn-secondary btn-sm" onclick="showEditType('${t.id}', '${t.name.replace(/'/g, "\\'")}', '${t.slug}', ${t.defaultDuration}, ${t.isOnline}, '${(t.defaultLocation ?? "").replace(/'/g, "\\'")}', ${t.isDefault}, '${t.earliestTime?.slice(0, 5) ?? ""}', '${t.latestTime?.slice(0, 5) ?? ""}', ${t.addGoogleMeet}, ${t.collectPhoneNumber})">Edit</button>
               <button class="btn-danger btn-sm" onclick="deleteType('${t.id}')">Delete</button>
             </div>
           </div>
@@ -587,6 +595,12 @@ export function renderSettingsBody(
         <p class="text-sm text-muted" style="margin-bottom: 0.75rem;">Restrict when Luca proposes this type of meeting. Leave blank for no restriction.</p>
         <div class="form-group">
           <label><input type="checkbox" id="typeDefault"> Set as default</label>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="typeGoogleMeet"> Add Google Meet link</label>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="typeCollectPhone"> Collect phone number from invitee</label>
         </div>
       </div>
       <div class="modal-footer">
@@ -811,10 +825,12 @@ export function renderSettingsBody(
       document.getElementById('typeEarliest').value = '';
       document.getElementById('typeLatest').value = '';
       document.getElementById('typeDefault').checked = false;
+      document.getElementById('typeGoogleMeet').checked = false;
+      document.getElementById('typeCollectPhone').checked = false;
       document.getElementById('typeModal').classList.add('active');
     }
 
-    function showEditType(id, name, slug, duration, isOnline, location, isDefault, earliest, latest) {
+    function showEditType(id, name, slug, duration, isOnline, location, isDefault, earliest, latest, addGoogleMeet, collectPhoneNumber) {
       document.getElementById('typeModalTitle').textContent = 'Edit Meeting Type';
       document.getElementById('typeId').value = id;
       document.getElementById('typeName').value = name;
@@ -825,6 +841,8 @@ export function renderSettingsBody(
       document.getElementById('typeEarliest').value = earliest || '';
       document.getElementById('typeLatest').value = latest || '';
       document.getElementById('typeDefault').checked = isDefault;
+      document.getElementById('typeGoogleMeet').checked = addGoogleMeet || false;
+      document.getElementById('typeCollectPhone').checked = collectPhoneNumber || false;
       document.getElementById('typeModal').classList.add('active');
     }
 
@@ -841,6 +859,8 @@ export function renderSettingsBody(
         earliestTime: earliestVal ? earliestVal + ':00' : undefined,
         latestTime: latestVal ? latestVal + ':00' : undefined,
         isDefault: document.getElementById('typeDefault').checked,
+        addGoogleMeet: document.getElementById('typeGoogleMeet').checked,
+        collectPhoneNumber: document.getElementById('typeCollectPhone').checked,
       };
 
       await fetch('/settings/meeting-types', {

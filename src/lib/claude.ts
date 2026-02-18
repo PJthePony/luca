@@ -110,6 +110,11 @@ const PARSE_EMAIL_TOOL: Anthropic.Tool = {
         description:
           "Specific topics, questions, or discussion items mentioned in the email. Extract these whenever the sender mentions things to discuss, cover, or talk about.",
       },
+      phone_number: {
+        type: "string",
+        description:
+          "A phone number shared by the sender, if any. Extract this when the sender provides their phone number in response to a phone call meeting request.",
+      },
     },
     required: ["intent", "response_draft"],
   },
@@ -218,6 +223,7 @@ MEETING CONTEXT & AGENDA:
       | string
       | undefined,
     agenda_items: (input.agenda_items as string[]) ?? [],
+    phone_number: input.phone_number as string | undefined,
   };
 }
 
