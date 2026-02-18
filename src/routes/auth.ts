@@ -35,7 +35,7 @@ function getAllowedOrigin(requestOrigin: string | undefined): string {
 authRoutes.get("/session", async (c) => {
   const token = c.req.query("token");
   const refreshToken = c.req.query("refresh");
-  const returnTo = c.req.query("returnTo") || "https://tessio.tanzillo.ai";
+  const returnTo = c.req.query("returnTo") || "https://tessio.tanzillo.ai/app";
 
   if (!token) {
     return c.text("Missing token parameter", 400);
@@ -149,7 +149,7 @@ authRoutes.post("/session/refresh", async (c) => {
  * GET /auth/logout?returnTo=<url>
  */
 authRoutes.get("/logout", (c) => {
-  const returnTo = c.req.query("returnTo") || "https://tessio.tanzillo.ai/login";
+  const returnTo = c.req.query("returnTo") || "https://tessio.tanzillo.ai";
   const clearOpts = `${COOKIE_OPTS}; Max-Age=0`;
 
   c.header("Set-Cookie", `sb_access_token=; ${clearOpts}`, { append: true });
