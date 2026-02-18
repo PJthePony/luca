@@ -38,11 +38,11 @@ async function seed() {
 
   // Seed default meeting types
   const defaultTypes = [
-    { name: "Coffee", slug: "coffee", isOnline: false, defaultDuration: 60, isDefault: false },
-    { name: "Video Call", slug: "video_call", isOnline: true, defaultDuration: 30, isDefault: true },
-    { name: "Lunch", slug: "lunch", isOnline: false, defaultDuration: 60, isDefault: false },
-    { name: "Quick Chat", slug: "quick_chat", isOnline: true, defaultDuration: 15, isDefault: false },
-    { name: "Phone Call", slug: "phone_call", isOnline: true, defaultDuration: 30, isDefault: false },
+    { name: "Coffee", isOnline: false, defaultDuration: 60, isDefault: false },
+    { name: "Video Call", isOnline: true, defaultDuration: 30, isDefault: true },
+    { name: "Lunch", isOnline: false, defaultDuration: 60, isDefault: false },
+    { name: "Quick Chat", isOnline: true, defaultDuration: 15, isDefault: false },
+    { name: "Phone Call", isOnline: true, defaultDuration: 30, isDefault: false },
   ];
 
   for (const mt of defaultTypes) {

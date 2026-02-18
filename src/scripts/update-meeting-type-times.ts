@@ -25,26 +25,25 @@ if (!user) {
 await db
   .update(meetingTypes)
   .set({ earliestTime: "07:00", latestTime: "11:00" })
-  .where(and(eq(meetingTypes.userId, user.id), eq(meetingTypes.slug, "coffee")));
+  .where(and(eq(meetingTypes.userId, user.id), eq(meetingTypes.name, "Coffee")));
 console.log("Coffee → 07:00 - 11:00");
 
 // Lunch: 11:30 - 13:30
 await db
   .update(meetingTypes)
   .set({ earliestTime: "11:30", latestTime: "13:30" })
-  .where(and(eq(meetingTypes.userId, user.id), eq(meetingTypes.slug, "lunch")));
+  .where(and(eq(meetingTypes.userId, user.id), eq(meetingTypes.name, "Lunch")));
 console.log("Lunch → 11:30 - 13:30");
 
 // Drinks: create if doesn't exist, then set times
 const existingDrinks = await db.query.meetingTypes.findFirst({
-  where: and(eq(meetingTypes.userId, user.id), eq(meetingTypes.slug, "drinks")),
+  where: and(eq(meetingTypes.userId, user.id), eq(meetingTypes.name, "Drinks")),
 });
 
 if (!existingDrinks) {
   await db.insert(meetingTypes).values({
     userId: user.id,
     name: "Drinks",
-    slug: "drinks",
     isOnline: false,
     defaultDuration: 60,
     defaultLocation: null,

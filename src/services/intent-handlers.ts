@@ -69,7 +69,7 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
 
   // Resolve meeting type from AI inference
   let effectiveDuration = parsed.meeting_details.duration_minutes ?? 30;
-  const aiMeetingType = parsed.meeting_details.meeting_type;
+  const aiMeetingTypeId = parsed.meeting_details.meeting_type_id;
   let matchedTypeId: string | undefined;
 
   // Get participant names for title building
@@ -77,13 +77,24 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
     where: eq(participants.meetingId, meeting.id),
   });
 
-  if (aiMeetingType) {
-    const matchedType = await db.query.meetingTypes.findFirst({
+  if (aiMeetingTypeId) {
+    // Look up by ID, verify ownership
+    let matchedType = await db.query.meetingTypes.findFirst({
       where: and(
+        eq(meetingTypes.id, aiMeetingTypeId),
         eq(meetingTypes.userId, organizer.id),
-        eq(meetingTypes.slug, aiMeetingType),
       ),
     });
+
+    // Fallback: if AI returned a bad ID, use the user's default meeting type
+    if (!matchedType) {
+      matchedType = await db.query.meetingTypes.findFirst({
+        where: and(
+          eq(meetingTypes.userId, organizer.id),
+          eq(meetingTypes.isDefault, true),
+        ),
+      }) ?? undefined;
+    }
 
     if (matchedType) {
       matchedTypeId = matchedType.id;

@@ -84,7 +84,6 @@ export const meetingTypes = pgTable(
       .notNull()
       .references(() => users.id),
     name: text("name").notNull(),
-    slug: text("slug").notNull(), // coffee, video_call, lunch, quick_chat, phone_call, other
     isOnline: boolean("is_online").notNull().default(true),
     defaultDuration: integer("default_duration").notNull().default(30), // minutes
     defaultLocation: text("default_location"),
@@ -99,7 +98,7 @@ export const meetingTypes = pgTable(
   },
   (table) => [
     index("idx_meeting_types_user").on(table.userId),
-    uniqueIndex("idx_meeting_types_user_slug").on(table.userId, table.slug),
+    uniqueIndex("idx_meeting_types_user_name").on(table.userId, table.name),
   ],
 );
 

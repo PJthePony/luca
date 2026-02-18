@@ -4,121 +4,121 @@ import type { ParsedEmail } from "../types/index.js";
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
-const PARSE_EMAIL_TOOL: Anthropic.Tool = {
-  name: "parse_scheduling_email",
-  description:
-    "Parse an incoming email and extract scheduling intent and details",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      intent: {
-        type: "string",
-        enum: [
-          "schedule_new",
-          "confirm_time",
-          "decline",
-          "reschedule",
-          "propose_alternatives",
-          "ask_for_more_times",
-          "freeform_question",
-          "unrelated",
-        ],
-        description: "The primary intent of the email sender",
-      },
-      selected_time: {
-        type: "object",
-        properties: {
-          start: { type: "string", description: "ISO 8601 datetime" },
-          end: { type: "string", description: "ISO 8601 datetime" },
+function buildParseEmailTool(): Anthropic.Tool {
+  return {
+    name: "parse_scheduling_email",
+    description:
+      "Parse an incoming email and extract scheduling intent and details",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        intent: {
+          type: "string",
+          enum: [
+            "schedule_new",
+            "confirm_time",
+            "decline",
+            "reschedule",
+            "propose_alternatives",
+            "ask_for_more_times",
+            "freeform_question",
+            "unrelated",
+          ],
+          description: "The primary intent of the email sender",
         },
-        required: ["start", "end"],
-        description: "If confirming, the specific time slot selected",
-      },
-      time_preferences: {
-        type: "array",
-        items: {
+        selected_time: {
           type: "object",
           properties: {
-            type: {
-              type: "string",
-              enum: ["prefer", "avoid", "available", "unavailable"],
+            start: { type: "string", description: "ISO 8601 datetime" },
+            end: { type: "string", description: "ISO 8601 datetime" },
+          },
+          required: ["start", "end"],
+          description: "If confirming, the specific time slot selected",
+        },
+        time_preferences: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: ["prefer", "avoid", "available", "unavailable"],
+              },
+              description: { type: "string" },
+              start: {
+                type: "string",
+                description:
+                  "ISO 8601 datetime with timezone offset. REQUIRED when a specific day/time is mentioned.",
+              },
+              end: {
+                type: "string",
+                description:
+                  "ISO 8601 datetime with timezone offset. REQUIRED when a specific day/time is mentioned.",
+              },
+              recurrence: { type: "string" },
+              dayOfWeek: {
+                type: "number",
+                description:
+                  "Day of week (0=Sunday, 1=Monday, ..., 6=Saturday). Set this whenever a weekday name is mentioned, even without a specific date.",
+              },
             },
-            description: { type: "string" },
-            start: {
+            required: ["type", "description"],
+          },
+          description:
+            "Time constraints extracted from natural language. ALWAYS include ISO 8601 start/end when a specific day or time is mentioned.",
+        },
+        meeting_details: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            duration_minutes: { type: "number" },
+            location: { type: "string" },
+            notes: { type: "string" },
+            meeting_type_id: {
               type: "string",
               description:
-                "ISO 8601 datetime with timezone offset. REQUIRED when a specific day/time is mentioned.",
-            },
-            end: {
-              type: "string",
-              description:
-                "ISO 8601 datetime with timezone offset. REQUIRED when a specific day/time is mentioned.",
-            },
-            recurrence: { type: "string" },
-            dayOfWeek: {
-              type: "number",
-              description:
-                "Day of week (0=Sunday, 1=Monday, ..., 6=Saturday). Set this whenever a weekday name is mentioned, even without a specific date.",
+                "The UUID of the matching meeting type from the organizer's configured list. Pick the best match based on context clues. If no type fits, omit this field.",
             },
           },
-          required: ["type", "description"],
         },
-        description:
-          "Time constraints extracted from natural language. ALWAYS include ISO 8601 start/end when a specific day or time is mentioned.",
-      },
-      meeting_details: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          duration_minutes: { type: "number" },
-          location: { type: "string" },
-          notes: { type: "string" },
-          meeting_type: {
-            type: "string",
-            enum: [
-              "coffee",
-              "video_call",
-              "lunch",
-              "quick_chat",
-              "phone_call",
-              "drinks",
-              "other",
-            ],
-            description:
-              "Inferred type of meeting from context. coffee/tea/cafe → coffee, zoom/meet/video → video_call, lunch/dinner/brunch → lunch, quick chat/brief → quick_chat, call/phone → phone_call, drinks/happy hour/beer/wine/cocktails/bar → drinks, unclear → other.",
-          },
+        participants: {
+          type: "array",
+          items: { type: "string" },
+          description: "Email addresses of participants mentioned",
+        },
+        response_draft: {
+          type: "string",
+          description:
+            "A natural, friendly draft email response for Luca to send",
+        },
+        meeting_context_summary: {
+          type: "string",
+          description:
+            "A 1-3 sentence summary of what this meeting is about, based on the email content and thread history. This will be added to the calendar event description.",
+        },
+        agenda_items: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Specific topics, questions, or discussion items mentioned in the email. Extract these whenever the sender mentions things to discuss, cover, or talk about.",
+        },
+        phone_number: {
+          type: "string",
+          description:
+            "A phone number shared by the sender, if any. Extract this when the sender provides their phone number in response to a phone call meeting request.",
         },
       },
-      participants: {
-        type: "array",
-        items: { type: "string" },
-        description: "Email addresses of participants mentioned",
-      },
-      response_draft: {
-        type: "string",
-        description:
-          "A natural, friendly draft email response for Luca to send",
-      },
-      meeting_context_summary: {
-        type: "string",
-        description:
-          "A 1-3 sentence summary of what this meeting is about, based on the email content and thread history. This will be added to the calendar event description.",
-      },
-      agenda_items: {
-        type: "array",
-        items: { type: "string" },
-        description:
-          "Specific topics, questions, or discussion items mentioned in the email. Extract these whenever the sender mentions things to discuss, cover, or talk about.",
-      },
-      phone_number: {
-        type: "string",
-        description:
-          "A phone number shared by the sender, if any. Extract this when the sender provides their phone number in response to a phone call meeting request.",
-      },
+      required: ["intent", "response_draft"],
     },
-    required: ["intent", "response_draft"],
-  },
-};
+  };
+}
+
+export interface UserMeetingType {
+  id: string;
+  name: string;
+  isOnline: boolean;
+  defaultDuration: number;
+}
 
 interface ParseContext {
   organizerName: string;
@@ -129,6 +129,7 @@ interface ParseContext {
   threadHistory?: string;
   availabilityPreferences?: string;
   existingAgenda?: string[];
+  userMeetingTypes?: UserMeetingType[];
 }
 
 export async function parseEmail(
@@ -178,7 +179,7 @@ TIME PREFERENCE EXTRACTION (critical):
 - If no specific dates/times can be determined, still set the description field with the natural language.
 
 MEETING TYPE INFERENCE:
-- Infer the meeting type from context clues: coffee/tea/cafe → coffee, zoom/meet/video/call → video_call, lunch/dinner/brunch → lunch, quick chat/5 minutes/brief → quick_chat, call/phone → phone_call, drinks/happy hour/beer/wine/cocktails/bar → drinks.
+${context.userMeetingTypes?.length ? `The organizer has these meeting types configured. Pick the best match by setting meeting_type_id to the UUID:\n${context.userMeetingTypes.map((mt) => `  - ${mt.id}: "${mt.name}" (${mt.isOnline ? "online" : "in-person"}, ${mt.defaultDuration} min)`).join("\n")}\nIf none match, omit meeting_type_id.` : "No meeting types are configured — omit meeting_type_id."}
 - If duration is not explicitly stated, do NOT set duration_minutes — the system uses the meeting type's default.
 
 MEETING CONTEXT & AGENDA:
@@ -190,7 +191,7 @@ MEETING CONTEXT & AGENDA:
     model: "claude-sonnet-4-5-20250929",
     max_tokens: 1024,
     system: systemPrompt,
-    tools: [PARSE_EMAIL_TOOL],
+    tools: [buildParseEmailTool()],
     tool_choice: { type: "tool", name: "parse_scheduling_email" },
     messages: [
       {

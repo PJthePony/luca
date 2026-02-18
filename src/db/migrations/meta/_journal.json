@@ -57,6 +57,13 @@
       "when": 1771392382601,
       "tag": "0007_hard_sandman",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1771394177063,
+      "tag": "0008_rare_leech",
+      "breakpoints": true
     }
   ]
 }

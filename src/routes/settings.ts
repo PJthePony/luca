@@ -121,7 +121,6 @@ settingsRoutes.post("/meeting-types", async (c) => {
   const body = await c.req.json<{
     id?: string;
     name: string;
-    slug: string;
     isOnline: boolean;
     defaultDuration: number;
     defaultLocation?: string;
@@ -145,7 +144,6 @@ settingsRoutes.post("/meeting-types", async (c) => {
       .update(meetingTypes)
       .set({
         name: body.name,
-        slug: body.slug,
         isOnline: body.isOnline,
         defaultDuration: body.defaultDuration,
         defaultLocation: body.defaultLocation ?? null,
@@ -172,7 +170,6 @@ settingsRoutes.post("/meeting-types", async (c) => {
     .values({
       userId,
       name: body.name,
-      slug: body.slug,
       isOnline: body.isOnline,
       defaultDuration: body.defaultDuration,
       defaultLocation: body.defaultLocation ?? null,
@@ -451,7 +448,7 @@ export function renderSettingsBody(
               ${t.collectPhoneNumber ? '<span class="badge">Phone #</span>' : ""}
             </div>
             <div class="card-actions">
-              <button class="btn-secondary btn-sm" onclick="showEditType('${t.id}', '${t.name.replace(/'/g, "\\'")}', '${t.slug}', ${t.defaultDuration}, ${t.isOnline}, '${(t.defaultLocation ?? "").replace(/'/g, "\\'")}', ${t.isDefault}, '${t.earliestTime?.slice(0, 5) ?? ""}', '${t.latestTime?.slice(0, 5) ?? ""}', ${t.addGoogleMeet}, ${t.collectPhoneNumber})">Edit</button>
+              <button class="btn-secondary btn-sm" onclick="showEditType('${t.id}', '${t.name.replace(/'/g, "\\'")}', ${t.defaultDuration}, ${t.isOnline}, '${(t.defaultLocation ?? "").replace(/'/g, "\\'")}', ${t.isDefault}, '${t.earliestTime?.slice(0, 5) ?? ""}', '${t.latestTime?.slice(0, 5) ?? ""}', ${t.addGoogleMeet}, ${t.collectPhoneNumber})">Edit</button>
               <button class="btn-danger btn-sm" onclick="deleteType('${t.id}')">Delete</button>
             </div>
           </div>
@@ -555,15 +552,9 @@ export function renderSettingsBody(
       </div>
       <div class="modal-body">
         <input type="hidden" id="typeId">
-        <div class="form-row">
-          <div class="form-group">
-            <label>Name</label>
-            <input type="text" id="typeName" placeholder="e.g. Coffee">
-          </div>
-          <div class="form-group">
-            <label>Slug</label>
-            <input type="text" id="typeSlug" placeholder="e.g. coffee">
-          </div>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" id="typeName" placeholder="e.g. Coffee">
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -814,7 +805,6 @@ export function renderSettingsBody(
       document.getElementById('typeModalTitle').textContent = 'New Meeting Type';
       document.getElementById('typeId').value = '';
       document.getElementById('typeName').value = '';
-      document.getElementById('typeSlug').value = '';
       document.getElementById('typeDuration').value = '30';
       document.getElementById('typeOnline').value = 'true';
       document.getElementById('typeLocation').value = '';
@@ -826,11 +816,10 @@ export function renderSettingsBody(
       document.getElementById('typeModal').classList.add('active');
     }
 
-    function showEditType(id, name, slug, duration, isOnline, location, isDefault, earliest, latest, addGoogleMeet, collectPhoneNumber) {
+    function showEditType(id, name, duration, isOnline, location, isDefault, earliest, latest, addGoogleMeet, collectPhoneNumber) {
       document.getElementById('typeModalTitle').textContent = 'Edit Meeting Type';
       document.getElementById('typeId').value = id;
       document.getElementById('typeName').value = name;
-      document.getElementById('typeSlug').value = slug;
       document.getElementById('typeDuration').value = duration;
       document.getElementById('typeOnline').value = isOnline ? 'true' : 'false';
       document.getElementById('typeLocation').value = location || '';
@@ -848,7 +837,6 @@ export function renderSettingsBody(
       const payload = {
         id: document.getElementById('typeId').value || undefined,
         name: document.getElementById('typeName').value,
-        slug: document.getElementById('typeSlug').value,
         isOnline: document.getElementById('typeOnline').value === 'true',
         defaultDuration: parseInt(document.getElementById('typeDuration').value),
         defaultLocation: document.getElementById('typeLocation').value || undefined,

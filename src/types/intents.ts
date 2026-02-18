@@ -18,21 +18,12 @@ export interface TimePreference {
   dayOfWeek?: number; // 0=Sunday, 6=Saturday
 }
 
-export type MeetingTypeSlug =
-  | "coffee"
-  | "video_call"
-  | "lunch"
-  | "quick_chat"
-  | "phone_call"
-  | "drinks"
-  | "other";
-
 export interface MeetingDetails {
   title?: string;
   duration_minutes?: number;
   location?: string;
   notes?: string;
-  meeting_type?: MeetingTypeSlug;
+  meeting_type_id?: string;
 }
 
 export interface ParsedEmail {

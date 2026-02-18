@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   meetings,
+  meetingTypes,
   emailThreads,
   emailMessages,
   users,
@@ -87,6 +88,17 @@ export async function parseInboundEmail(
   // Get existing agenda items for context
   const existingAgenda = (meeting?.agenda as string[]) ?? [];
 
+  // Get organizer's meeting types for AI matching
+  const userTypes = await db.query.meetingTypes.findMany({
+    where: eq(meetingTypes.userId, organizerId),
+  });
+  const userMeetingTypes = userTypes.map((t) => ({
+    id: t.id,
+    name: t.name,
+    isOnline: t.isOnline,
+    defaultDuration: t.defaultDuration,
+  }));
+
   return parseEmail(emailBody, senderEmail, senderName, subject, {
     organizerName: organizer.name,
     organizerEmail: organizer.email,
@@ -96,5 +108,6 @@ export async function parseInboundEmail(
     threadHistory: threadHistory || undefined,
     availabilityPreferences: availabilityPreferences || undefined,
     existingAgenda: existingAgenda.length > 0 ? existingAgenda : undefined,
+    userMeetingTypes,
   });
 }
