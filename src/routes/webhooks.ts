@@ -16,8 +16,6 @@ import {
   buildCalendarDescription,
 } from "../services/intent-handlers.js";
 import type { IntentContext } from "../services/intent-handlers.js";
-import { parseTaskEmail } from "../lib/claude.js";
-import { createTessioTask } from "../lib/tessio.js";
 import { EmailDirection } from "../types/index.js";
 import type { GoogleTokens } from "../types/index.js";
 import { env } from "../config.js";
@@ -25,14 +23,40 @@ import { env } from "../config.js";
 export const webhookRoutes = new Hono();
 
 /**
- * Mailgun inbound webhook endpoint.
- * Receives parsed email data when someone sends an email to luca@tanzillo.ai.
+ * Mailgun inbound webhook endpoint — catch-all for *@tanzillo.ai.
+ * Routes emails to the appropriate handler based on the recipient address.
  */
 webhookRoutes.post("/inbound", async (c) => {
   const body = await c.req.parseBody();
 
   try {
     const email = parseInboundWebhook(body as Record<string, unknown>);
+
+    // ── Route by recipient address ───────────────────────────────────────
+    const allRecipients = [...email.to, ...email.cc].map((a) => a.toLowerCase());
+    const tessioAddr = `tessio@${env.MAILGUN_DOMAIN}`;
+    const lucaAddr = `luca@${env.MAILGUN_DOMAIN}`;
+
+    const isForTessio = allRecipients.some((addr) => addr.includes(tessioAddr));
+    const isForLuca = allRecipients.some((addr) => addr.includes(lucaAddr));
+
+    // Tessio: forward to the email-to-task Edge Function
+    if (isForTessio) {
+      return await forwardToTessio(body as Record<string, unknown>, c);
+    }
+
+    // Not addressed to any known app — reply with guidance
+    if (!isForLuca) {
+      await sendEmail({
+        to: [email.from],
+        subject: email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`,
+        text: `Hey! I got your email, but I'm not sure what to do with it.\n\nHere's who can help:\n• tessio@${env.MAILGUN_DOMAIN} — for creating tasks\n• luca@${env.MAILGUN_DOMAIN} — CC me on an email thread to schedule a meeting\n\n- The Family`,
+        headers: email.messageId ? { "In-Reply-To": email.messageId } : {},
+      });
+      return c.json({ status: "unknown_recipient" });
+    }
+
+    // ── Luca: scheduling flow ────────────────────────────────────────────
 
     // Idempotency: skip if we've already processed this message
     if (email.messageId) {
@@ -44,14 +68,19 @@ webhookRoutes.post("/inbound", async (c) => {
       }
     }
 
-    // Check: is this a direct email to Luca (not a reply to an existing thread)?
-    const lucaAddr = `luca@${env.MAILGUN_DOMAIN}`;
     const isLucaInTo = email.to.some((addr) => addr.toLowerCase().includes(lucaAddr));
     const isLucaInCc = email.cc.some((addr) => addr.toLowerCase().includes(lucaAddr));
     const hasReplyHeaders = !!(email.inReplyTo || email.references);
 
     if (isLucaInTo && !isLucaInCc && !hasReplyHeaders) {
-      return await handleDirectTaskEmail(email, body as Record<string, unknown>, c);
+      // Direct email to Luca that isn't part of a scheduling thread
+      await sendEmail({
+        to: [email.from],
+        subject: email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`,
+        text: `Hey! I'm Luca, and I handle calendar scheduling. To create a task, email tessio@${env.MAILGUN_DOMAIN} instead — Tessio's got you covered.\n\nTo schedule a meeting, just CC me (luca@${env.MAILGUN_DOMAIN}) on an email thread with the people you want to meet.\n\n- Luca`,
+        headers: email.messageId ? { "In-Reply-To": email.messageId } : {},
+      });
+      return c.json({ status: "redirected_to_tessio" });
     }
 
     // Resolve the thread / meeting (existing scheduling flow)
@@ -148,49 +177,46 @@ webhookRoutes.post("/inbound", async (c) => {
 
 // ── Internal Helpers ────────────────────────────────────────────────────────
 
-/** Handle a direct email to Luca (task creation, not scheduling). */
-async function handleDirectTaskEmail(
-  email: ReturnType<typeof parseInboundWebhook>,
+/** Forward the raw Mailgun payload to Tessio's email-to-task Edge Function. */
+async function forwardToTessio(
   body: Record<string, unknown>,
   c: any,
 ) {
-  // Find the account owner — must be a registered user
-  const taskOwner = await db.query.users.findFirst({
-    where: eq(users.email, email.from),
-  });
+  const tessioUrl = `${env.SUPABASE_URL}/functions/v1/email-to-task`;
 
-  if (!taskOwner) {
-    console.warn(`Direct email from unregistered user: ${email.from}`);
-    return c.json({ status: "no_user" });
+  // Rebuild the form data to forward to the Edge Function
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(body)) {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      formData.append(key, String(value));
+    }
   }
 
-  const tz = taskOwner.timezone || "America/New_York";
+  try {
+    const response = await fetch(tessioUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+      },
+      body: formData,
+    });
 
-  const parsed = await parseTaskEmail(
-    email.strippedText || email.bodyPlain,
-    email.from,
-    email.fromName,
-    email.subject,
-    tz,
-  );
+    const result = await response.json();
+    return c.json({ status: "forwarded_to_tessio", tessio: result });
+  } catch (err) {
+    console.error("Failed to forward to Tessio:", err);
 
-  const task = await createTessioTask({
-    title: parsed.task_title,
-    notes: parsed.task_notes,
-    location: parsed.task_location,
-    tags: ["luca"],
-    activate_at: parsed.task_activate_at,
-  });
+    // Parse sender from body so we can reply with an error
+    const email = parseInboundWebhook(body);
+    await sendEmail({
+      to: [email.from],
+      subject: email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`,
+      text: `Hey! I tried to forward your email to Tessio for task creation, but something went wrong. Please try again later or add the task directly at tessio.tanzillo.ai.\n\n- Luca`,
+      headers: email.messageId ? { "In-Reply-To": email.messageId } : {},
+    });
 
-  // Reply to the sender with confirmation
-  await sendEmail({
-    to: [email.from],
-    subject: email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`,
-    text: `${parsed.response_draft}\n\n- Luca`,
-    headers: email.messageId ? { "In-Reply-To": email.messageId } : {},
-  });
-
-  return c.json({ status: "task_created", taskId: task.id });
+    return c.json({ status: "tessio_forward_error" }, 500);
+  }
 }
 
 /** Store an inbound email message in the database. */

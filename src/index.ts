@@ -12,6 +12,7 @@ import { authRoutes } from "./routes/auth.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { joinRoutes } from "./routes/join.js";
+import { loginRoutes } from "./routes/login.js";
 import { fontLinks, landingDarkStyles, logoSvgDark } from "./lib/styles.js";
 
 const app = new Hono();
@@ -93,7 +94,7 @@ app.get("/", async (c) => {
       </div>
       <h1 class="hero-headline">Luca</h1>
       <p class="hero-description">Your AI scheduling assistant.</p>
-      <a href="/join" class="sign-in-btn">Sign In</a>
+      <a href="/login" class="sign-in-btn">Sign In</a>
     </div>
   </section>
 
@@ -113,6 +114,7 @@ app.route("/webhooks", webhookRoutes);
 app.route("/meeting", meetingRoutes);
 app.route("/auth", authRoutes);
 app.route("/join", joinRoutes);
+app.route("/login", loginRoutes);
 app.route("/settings", settingsRoutes);
 app.route("/dashboard", dashboardRoutes);
 

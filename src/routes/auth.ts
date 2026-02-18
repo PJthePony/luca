@@ -15,6 +15,7 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 const ALLOWED_ORIGINS = [
   "https://tessio.tanzillo.ai",
   "https://genco.tanzillo.ai",
+  "https://luca.tanzillo.ai",
 ];
 
 function getAllowedOrigin(requestOrigin: string | undefined): string {

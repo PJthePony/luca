@@ -13,9 +13,8 @@ const envSchema = z.object({
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
   GOOGLE_MAPS_API_KEY: z.string().min(1).optional(),
   SUPABASE_URL: z.string().url().default("https://jlkognkltdkzerzpcqpu.supabase.co"),
+  SUPABASE_ANON_KEY: z.string().min(1).default("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impsa29nbmtsdGRremVyenBjcXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0MTEwMjksImV4cCI6MjA4NTk4NzAyOX0.uqGEaFxmwInG3m5_dx5ZPEv7ex0a4AbIq2-fk2gkH7U"),
   IMESSAGE_GATEWAY_URL: z.string().url().optional(),
-  TESSIO_API_URL: z.string().url(),
-  TESSIO_API_KEY: z.string().startsWith("nb_"),
   PORT: z.coerce.number().default(3000),
   APP_URL: z.string().url().default("http://localhost:3000"),
   NODE_ENV: z

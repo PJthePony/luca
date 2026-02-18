@@ -16,14 +16,14 @@ joinRoutes.get("/", async (c) => {
   const token = parseCookie(cookieHeader, "sb_access_token");
 
   if (!token) {
-    return c.redirect("https://tessio.tanzillo.ai/login");
+    return c.redirect("/login");
   }
 
   let payload;
   try {
     payload = await verifySupabaseJwt(token);
   } catch {
-    return c.redirect("https://tessio.tanzillo.ai/login");
+    return c.redirect("/login");
   }
 
   // Check if user already exists
