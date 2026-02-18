@@ -593,13 +593,9 @@ export function renderSettingsBody(
           </div>
         </div>
         <p class="text-sm text-muted" style="margin-bottom: 0.75rem;">Restrict when Luca proposes this type of meeting. Leave blank for no restriction.</p>
-        <div class="form-group">
+        <div class="checkbox-group">
           <label><input type="checkbox" id="typeDefault"> Set as default</label>
-        </div>
-        <div class="form-group">
           <label><input type="checkbox" id="typeGoogleMeet"> Add Google Meet link</label>
-        </div>
-        <div class="form-group">
           <label><input type="checkbox" id="typeCollectPhone"> Collect phone number from invitee</label>
         </div>
       </div>

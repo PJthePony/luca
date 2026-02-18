@@ -377,6 +377,45 @@ export const baseStyles = `
     color: var(--nxb-color-text);
     transition: border-color var(--nxb-transition-fast);
   }
+  .form-group input[type="checkbox"] {
+    width: auto;
+    padding: 0;
+    border: revert;
+    border-radius: revert;
+    background: revert;
+    vertical-align: middle;
+    margin-right: 0.375rem;
+  }
+  .form-group label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    font-size: 0.875rem;
+    color: var(--nxb-color-text);
+    cursor: pointer;
+  }
+  .checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .checkbox-group label {
+    display: flex;
+    align-items: center;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--nxb-color-text);
+    cursor: pointer;
+    margin: 0;
+  }
+  .checkbox-group input[type="checkbox"] {
+    width: auto;
+    padding: 0;
+    border: revert;
+    border-radius: revert;
+    background: revert;
+    margin: 0 0.375rem 0 0;
+  }
   .form-group input:focus, .form-group select:focus {
     outline: none;
     border-color: var(--nxb-color-primary);
