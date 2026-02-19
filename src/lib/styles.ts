@@ -336,7 +336,9 @@ export const headerStyles = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 24px 48px;
+    padding: 16px 24px;
+    background: var(--nxb-color-bg);
+    border-bottom: 1px solid var(--nxb-color-border);
   }
   .app-header-brand {
     display: flex;
@@ -361,7 +363,7 @@ export const headerStyles = `
     height: 34px;
     border-radius: var(--nxb-radius-md);
     border: 1px solid var(--nxb-color-border);
-    background: var(--nxb-color-surface);
+    background: var(--nxb-color-bg);
     color: var(--nxb-color-text-secondary);
     cursor: pointer;
     display: flex;
@@ -372,11 +374,11 @@ export const headerStyles = `
   }
   .header-btn:hover,
   .header-btn:active {
-    background: var(--nxb-color-bg);
+    background: var(--nxb-color-surface);
     color: var(--nxb-color-text);
   }
-  @media (max-width: 640px) {
-    .app-header { padding: 16px; }
+  @media (max-width: 768px) {
+    .app-header { padding: 12px 16px; }
     .header-btn { width: 44px; height: 44px; }
     .app-header-nav { gap: 8px; }
   }
