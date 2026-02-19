@@ -57,6 +57,14 @@ export const baseStyles = `
   }
 
   /* ── Base ───────────────────────────────────────── */
+  html {
+    font-size: 21px;
+  }
+  @media (min-width: 641px) {
+    html {
+      font-size: 16px;
+    }
+  }
   body {
     font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--nxb-color-bg);
