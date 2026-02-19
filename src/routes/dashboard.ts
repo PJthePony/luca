@@ -736,7 +736,7 @@ function renderMeetingCard(d: MeetingData, tz: string): string {
     return `
     <div class="meeting-card cancelled" data-status="cancelled">
       <div class="meeting-card-header">
-        <div>
+        <div style="white-space:nowrap;">
           <span class="status-badge cancelled">Cancelled</span>
           <span style="margin-left:0.5rem;font-weight:500;">${m.title ?? "Meeting"}</span>
           <span class="text-sm text-muted" style="margin-left:0.5rem;">${attendeeStr} · ${dateStr}</span>

@@ -741,6 +741,14 @@ export const dashboardStyles = `
     gap: 12px;
     margin-bottom: 0.25rem;
   }
+  .meeting-card-header > div:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .meeting-card-header .action-btn {
+    flex-shrink: 0;
+  }
 
   .meeting-title {
     font-size: 1rem;
@@ -834,6 +842,7 @@ export const dashboardStyles = `
     border-radius: var(--nxb-radius-md);
     cursor: pointer;
     transition: all var(--nxb-transition-fast);
+    white-space: nowrap;
   }
   .action-btn.nudge {
     background: #fef3c7; color: #92400e; border: 1px solid #fde68a;
