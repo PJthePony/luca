@@ -58,7 +58,7 @@ export const baseStyles = `
 
   /* ── Base ───────────────────────────────────────── */
   html {
-    font-size: 21px;
+    font-size: 20px;
   }
   @media (min-width: 641px) {
     html {
