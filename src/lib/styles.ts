@@ -929,8 +929,8 @@ export const dashboardStyles = `
     border-top: 1px solid var(--nxb-color-border);
   }
   .action-btn {
-    padding: 0.3rem 0.75rem;
-    font-size: 0.78rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
     font-weight: 500;
     border-radius: var(--nxb-radius-md);
     cursor: pointer;
