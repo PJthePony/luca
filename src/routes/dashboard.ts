@@ -371,7 +371,7 @@ function renderDashboardPage(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Luca — Dashboard</title>
+  <title>Luca</title>
   ${fontLinks}
   ${googleMapsApiKey ? `<script async src="https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=places&loading=async"></script>` : ""}
   <style>
