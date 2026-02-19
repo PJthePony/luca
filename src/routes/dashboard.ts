@@ -396,7 +396,7 @@ function renderDashboardPage(
 
   <div class="container">
     <div class="page-header">
-      <h1>Luca's Meetings</h1>
+      <h1>On the Books</h1>
       <select class="filter-select" onchange="filterMeetings(this.value)">
         <option value="all">All</option>
         <option value="active">Active</option>
