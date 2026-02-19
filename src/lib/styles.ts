@@ -356,7 +356,7 @@ export const headerStyles = `
   .app-header-nav {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 16px;
   }
   .header-btn {
     width: 34px;
