@@ -773,6 +773,14 @@ export const dashboardStyles = `
     margin-bottom: 1.5rem;
   }
   .page-header h1 { margin: 0; }
+  .page-date {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--nxb-color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
 
   .filter-select {
     padding: 6px 12px;

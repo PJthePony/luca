@@ -359,6 +359,9 @@ function renderDashboardPage(
 
   const settingsBody = renderSettingsBody(user, calendars, types, rules, googleMapsApiKey);
 
+  const today = new Date();
+  const dateStr = today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz });
+
   const meetingCards = meetingsData
     .map((d) => renderMeetingCard(d, tz))
     .join("\n");
@@ -396,7 +399,10 @@ function renderDashboardPage(
 
   <div class="container">
     <div class="page-header">
-      <h1>On the Books</h1>
+      <div>
+        <div class="page-date">${dateStr}</div>
+        <h1>On the Books</h1>
+      </div>
       <select class="filter-select" onchange="filterMeetings(this.value)">
         <option value="all">All</option>
         <option value="active">Active</option>
