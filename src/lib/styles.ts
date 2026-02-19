@@ -238,13 +238,18 @@ export const baseStyles = `
     font-size: 1.05rem;
     font-weight: 600;
     letter-spacing: -0.02em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .modal-close {
-    width: 26px; height: 26px;
+    width: 44px; height: 44px;
     border-radius: var(--nxb-radius-sm);
     font-size: 1.1rem;
     color: var(--nxb-color-text-secondary);
     display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
   }
   .modal-close:hover { background: var(--nxb-color-border); color: var(--nxb-color-text); }
   .modal-body { padding: 22px; }
@@ -297,8 +302,32 @@ export const baseStyles = `
   a { color: var(--nxb-color-primary); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
+  /* ── Mobile: base ────────────────────────────────── */
   @media (max-width: 768px) {
     .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
+    .btn { min-height: 44px; }
+    .btn-sm { min-height: 44px; }
+    .btn-ghost { min-height: 44px; }
+    .form-group input, .form-group select { min-height: 44px; }
+  }
+  @media (max-width: 640px) {
+    .container { padding: 1rem; }
+    .modal-header { padding: 14px 16px; }
+    .modal-body { padding: 16px; }
+    .modal-footer { padding: 12px 16px; }
+    .modal-title { font-size: 0.95rem; }
+    #toast {
+      left: 16px;
+      right: 16px;
+      transform: none;
+      text-align: center;
+      max-width: 100%;
+    }
+    .card-header-row { flex-wrap: wrap; gap: 0.5rem; }
+    .card-actions { flex-wrap: wrap; }
+    .card-row { flex-wrap: wrap; gap: 0.5rem; }
+    .toggle { min-height: 44px; }
+    .badge { margin-left: 0.25rem; }
   }`;
 
 /** Shared app header/nav styles — Tessio topbar pattern. */
@@ -346,8 +375,10 @@ export const headerStyles = `
     background: var(--nxb-color-bg);
     color: var(--nxb-color-text);
   }
-  @media (max-width: 600px) {
-    .app-header { padding: 20px 24px; }
+  @media (max-width: 640px) {
+    .app-header { padding: 16px; }
+    .header-btn { width: 44px; height: 44px; }
+    .app-header-nav { gap: 8px; }
   }
 `;
 
@@ -362,7 +393,7 @@ export const settingsStyles = `
     padding: 0.125rem 0.5rem; border-radius: 1rem;
     font-size: 0.8rem; font-weight: 500;
   }
-  .btn-inline-delete { background: none; border: none; color: var(--nxb-color-text-muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.125rem; }
+  .btn-inline-delete { background: none; border: none; color: var(--nxb-color-text-muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.125rem; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
   .btn-inline-delete:hover { color: var(--nxb-color-danger); }
   .locations-section { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--nxb-color-border); }
   .location-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; margin-bottom: 0.25rem; border-radius: var(--nxb-radius-sm); }
@@ -373,7 +404,16 @@ export const settingsStyles = `
   .pac-item-selected { background: #eff6ff; }
   .pac-icon { display: none; }
   .pac-item-query { font-weight: 600; font-size: 0.875rem; }
-  .autocomplete-hint { font-size: 0.75rem; color: var(--nxb-color-text-muted); margin-top: 0.25rem; }`;
+  .autocomplete-hint { font-size: 0.75rem; color: var(--nxb-color-text-muted); margin-top: 0.25rem; }
+
+  @media (max-width: 640px) {
+    .day-label { min-width: 70px; font-size: 0.85rem; }
+    .avail-row { gap: 0.375rem; }
+    .avail-slot { font-size: 0.75rem; padding: 0.125rem 0.375rem; }
+    .location-row { flex-wrap: wrap; gap: 0.5rem; }
+    .location-row > div { min-width: 0; overflow: hidden; }
+    .location-row > div .text-muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  }`;
 
 /** Meeting picker page styles. */
 export const meetingStyles = `
@@ -415,11 +455,20 @@ export const meetingStyles = `
     display: block; width: 100%; padding: 0.75rem; margin-top: 1rem;
     border: none; background: none; color: var(--nxb-color-primary);
     cursor: pointer; font-size: 0.9rem;
+    min-height: 44px;
   }
   .none-work:hover { text-decoration: underline; }
-  #message { margin-top: 1rem; padding: 1rem; border-radius: var(--nxb-radius-md); display: none; }
+  #message { margin-top: 1rem; padding: 1rem; border-radius: var(--nxb-radius-md); display: none; word-break: break-word; }
   #message.success { display: block; background: #d1fae5; color: #065f46; }
-  #message.error { display: block; background: #fee2e2; color: #991b1b; }`;
+  #message.error { display: block; background: #fee2e2; color: #991b1b; }
+
+  @media (max-width: 640px) {
+    .slot-card { padding: 0.875rem; min-height: 44px; }
+    .slot-date { font-size: 0.9rem; }
+    .slot-time { font-size: 0.85rem; }
+    .location-card { padding: 0.875rem; min-height: 44px; }
+    .location-address { word-break: break-word; }
+  }`;
 
 /** Landing/Join page styles (light — used by /join). */
 export const landingStyles = `
@@ -467,6 +516,7 @@ export const landingStyles = `
     border-radius: var(--nxb-radius-md); font-size: 0.95rem; font-weight: 600;
     text-decoration: none; margin-bottom: 16px;
     transition: background var(--nxb-transition-fast);
+    min-height: 44px;
   }
   .cta-btn:hover { background: var(--nxb-color-primary-hover); text-decoration: none; }
   .email-badge {
@@ -474,12 +524,19 @@ export const landingStyles = `
     border: 1px solid var(--nxb-color-border);
     color: var(--nxb-color-primary); padding: 8px 16px;
     border-radius: var(--nxb-radius-md); font-size: 0.95rem; font-weight: 500; font-family: monospace;
+    word-break: break-all;
   }
   .note { text-align: center; font-size: 0.85rem; color: var(--nxb-color-text-muted); margin-top: 16px; }
   .error {
     background: #fee2e2; color: #dc2626;
     padding: 10px 12px; border-radius: var(--nxb-radius-md);
     font-size: 0.875rem; margin-bottom: 16px; display: none;
+  }
+
+  @media (max-width: 640px) {
+    .container { padding: 24px 16px; }
+    .how-it-works { padding: 16px; }
+    .email-badge { font-size: 0.85rem; padding: 6px 12px; }
   }`;
 
 /** Landing page styles — dark mode, matching tanzillo.ai. */
@@ -623,6 +680,7 @@ export const landingDarkStyles = `
     text-decoration: none;
     transition: background 150ms ease, transform 150ms ease;
     letter-spacing: -0.01em;
+    min-height: 44px;
   }
   .sign-in-btn:hover {
     background: #ea6c0e;
@@ -665,9 +723,12 @@ export const landingDarkStyles = `
   }
 
   @media (max-width: 640px) {
-    .landing-nav { padding: 18px 20px; }
-    .landing-footer { padding: 24px 20px; }
-    .hero-description { font-size: 1rem; }
+    .landing-nav { padding: 16px; }
+    .landing-footer { padding: 20px 16px; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .hero { padding: 16px; }
+    .hero-description { font-size: 1rem; margin-bottom: 32px; }
+    .sign-in-btn { padding: 12px 28px; }
+    .login-card { padding: 28px 20px; }
   }`;
 
 /** Join page form card styles — extends landingStyles. */
@@ -692,8 +753,13 @@ export const joinStyles = `
     border: none; border-radius: var(--nxb-radius-md);
     font-size: 0.95rem; font-weight: 600;
     transition: background var(--nxb-transition-fast);
+    min-height: 44px;
   }
-  .card button[type="submit"]:hover { background: var(--nxb-color-primary-hover); }`;
+  .card button[type="submit"]:hover { background: var(--nxb-color-primary-hover); }
+
+  @media (max-width: 640px) {
+    .card input, .card select { font-size: 16px; min-height: 44px; }
+  }`;
 
 /** Dashboard page styles. */
 export const dashboardStyles = `
@@ -727,6 +793,7 @@ export const dashboardStyles = `
     padding: 1.25rem;
     margin-bottom: 0.75rem;
     transition: border-color var(--nxb-transition-fast);
+    overflow: hidden;
   }
   .meeting-card:hover { border-color: var(--nxb-color-border-light); }
   .meeting-card.cancelled {
@@ -755,12 +822,18 @@ export const dashboardStyles = `
     font-weight: 600;
     letter-spacing: -0.01em;
     color: var(--nxb-color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .meeting-meta {
     font-size: 0.8rem;
     color: var(--nxb-color-text-muted);
     margin-bottom: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ── Status badges ──────────────────────────── */
@@ -785,6 +858,7 @@ export const dashboardStyles = `
     font-size: 0.85rem;
     color: var(--nxb-color-text-secondary);
     margin-bottom: 0.75rem;
+    overflow: hidden;
   }
   .meeting-times strong { color: var(--nxb-color-text); }
   .time-slot {
@@ -795,6 +869,10 @@ export const dashboardStyles = `
     padding: 0.125rem 0.5rem;
     margin: 0.125rem 0.25rem 0.125rem 0;
     font-size: 0.8rem;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ── Agenda ─────────────────────────────────── */
@@ -813,6 +891,8 @@ export const dashboardStyles = `
   .agenda-item {
     color: var(--nxb-color-text);
     padding: 0.125rem 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .agenda-item::before { content: '- '; color: var(--nxb-color-text-muted); }
   .agenda-none { color: var(--nxb-color-text-muted); font-style: italic; font-size: 0.8rem; }
@@ -824,6 +904,9 @@ export const dashboardStyles = `
     border: none;
     padding: 0;
     margin-top: 0.125rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
   }
   .add-agenda-btn:hover { text-decoration: underline; }
 
@@ -906,6 +989,7 @@ export const dashboardStyles = `
     justify-content: space-between;
     align-items: flex-start;
     margin-bottom: 0.375rem;
+    gap: 0.5rem;
   }
   .email-direction {
     font-size: 0.65rem;
@@ -914,6 +998,7 @@ export const dashboardStyles = `
     text-transform: uppercase;
     padding: 0.0625rem 0.375rem;
     border-radius: 0.25rem;
+    flex-shrink: 0;
   }
   .email-direction.inbound { background: #dbeafe; color: #1d4ed8; }
   .email-direction.outbound { background: #f1f5f9; color: var(--nxb-color-text-secondary); }
@@ -932,8 +1017,14 @@ export const dashboardStyles = `
     font-size: 0.75rem;
     color: var(--nxb-color-text-muted);
     margin-bottom: 0.5rem;
+    overflow: hidden;
   }
-  .email-meta div { margin-bottom: 0.0625rem; }
+  .email-meta div {
+    margin-bottom: 0.0625rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .email-body {
     font-size: 0.85rem;
@@ -949,6 +1040,7 @@ export const dashboardStyles = `
     font-size: 0.75rem;
     color: var(--nxb-color-text-muted);
     text-align: center;
+    word-break: break-word;
   }
 
   /* ── Agenda modal ───────────────────────────── */
@@ -958,8 +1050,14 @@ export const dashboardStyles = `
     align-items: center;
     padding: 0.5rem 0;
     border-bottom: 1px solid var(--nxb-color-border);
+    gap: 0.5rem;
   }
   .agenda-modal-item:last-child { border-bottom: none; }
+  .agenda-modal-item > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .agenda-remove-btn {
     color: var(--nxb-color-text-muted);
     cursor: pointer;
@@ -968,6 +1066,12 @@ export const dashboardStyles = `
     background: none;
     border: none;
     padding: 0 0.25rem;
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
   .agenda-remove-btn:hover { color: var(--nxb-color-danger); }
   .agenda-add-row {
@@ -982,10 +1086,30 @@ export const dashboardStyles = `
     border-radius: var(--nxb-radius-md);
     font-size: 0.85rem;
     background: var(--nxb-color-bg);
+    min-width: 0;
   }
   .agenda-add-row input:focus {
     outline: none;
     border-color: var(--nxb-color-primary);
     box-shadow: 0 0 0 3px var(--nxb-color-primary-ring);
+  }
+
+  /* ── Mobile: dashboard ─────────────────────── */
+  @media (max-width: 640px) {
+    .container { padding: 1rem 1rem 3rem; }
+    .meeting-card { padding: 1rem; }
+    .meeting-card.cancelled { padding: 0.75rem 1rem; }
+    .meeting-card-header { flex-wrap: wrap; gap: 0.5rem; }
+    .meeting-card-header > div:first-child { width: 100%; }
+    .meeting-meta { white-space: normal; word-break: break-word; }
+    .meeting-times { overflow: visible; }
+    .time-slot { white-space: normal; overflow: visible; font-size: 0.75rem; }
+    .action-btn { min-height: 44px; padding: 0.5rem 0.75rem; display: inline-flex; align-items: center; }
+    .filter-select { min-height: 44px; }
+    .email-msg { padding: 0.75rem 1rem; }
+    .email-msg-header { flex-wrap: wrap; }
+    .email-meta div { white-space: normal; word-break: break-all; }
+    .comms-footer { padding: 0.75rem 1rem; }
+    .agenda-add-row input { font-size: 16px; min-height: 44px; }
   }
 `;
