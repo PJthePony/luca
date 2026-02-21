@@ -16,6 +16,8 @@ export interface TimePreference {
   end?: string;
   recurrence?: string;
   dayOfWeek?: number; // 0=Sunday, 6=Saturday
+  timeOfDayStart?: string; // HH:MM, e.g. "12:00" for afternoons
+  timeOfDayEnd?: string; // HH:MM, e.g. "17:00" for afternoons
 }
 
 export interface MeetingDetails {

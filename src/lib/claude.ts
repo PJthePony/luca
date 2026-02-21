@@ -61,6 +61,16 @@ function buildParseEmailTool(): Anthropic.Tool {
                 description:
                   "Day of week (0=Sunday, 1=Monday, ..., 6=Saturday). Set this whenever a weekday name is mentioned, even without a specific date.",
               },
+              timeOfDayStart: {
+                type: "string",
+                description:
+                  'HH:MM format. For general time-of-day constraints not tied to a specific date (e.g., "mornings" → "08:00", "after 3pm" → "15:00").',
+              },
+              timeOfDayEnd: {
+                type: "string",
+                description:
+                  'HH:MM format. End of the time-of-day window (e.g., "mornings" → "12:00", "after 3pm" → "23:59").',
+              },
             },
             required: ["type", "description"],
           },
@@ -177,6 +187,17 @@ TIME PREFERENCE EXTRACTION (critical):
 - Example: "next week" → set start to next Monday 00:00 and end to next Friday 23:59 in ${tz}.
 - ALWAYS set the dayOfWeek field (0=Sunday through 6=Saturday) when a weekday name is mentioned.
 - If no specific dates/times can be determined, still set the description field with the natural language.
+- Use "unavailable" or "avoid" types when the sender says they CAN'T do something (e.g., "not Monday", "I'm out Wednesday", "can't do mornings"). These are hard constraints.
+- Use "prefer" or "available" when the sender says they CAN do something (e.g., "I'm free Thursday", "afternoons work best", "let's do next week").
+
+TIME-OF-DAY PREFERENCES (use timeOfDayStart/timeOfDayEnd):
+- For general time-of-day constraints NOT tied to a specific date, set timeOfDayStart and timeOfDayEnd as HH:MM strings.
+- "mornings" → timeOfDayStart: "08:00", timeOfDayEnd: "12:00"
+- "afternoons" / "afternoons only" → timeOfDayStart: "12:00", timeOfDayEnd: "17:00"
+- "after 3pm" → timeOfDayStart: "15:00", timeOfDayEnd: "23:59"
+- "before noon" → timeOfDayStart: "00:00", timeOfDayEnd: "12:00"
+- "evenings" → timeOfDayStart: "17:00", timeOfDayEnd: "21:00"
+- If tied to a specific date (e.g., "Tuesday afternoon"), use ISO start/end instead — those are more precise.
 
 MEETING TYPE INFERENCE:
 ${context.userMeetingTypes?.length ? `The organizer has these meeting types configured. Pick the best match by setting meeting_type_id to the UUID:\n${context.userMeetingTypes.map((mt) => `  - ${mt.id}: "${mt.name}" (${mt.isOnline ? "online" : "in-person"}, ${mt.defaultDuration} min)`).join("\n")}\nIf none match, omit meeting_type_id.` : "No meeting types are configured — omit meeting_type_id."}

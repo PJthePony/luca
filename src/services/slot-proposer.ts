@@ -270,6 +270,9 @@ function scoreSlot(
   if (localHour >= 10 && localHour <= 14) score += 5;
 
   // Apply email-stated time preferences
+  const localMinute = getLocalMinute(slot.start, tz);
+  const slotMinutes = localHour * 60 + localMinute;
+
   for (const pref of timePreferences) {
     // ISO date overlap scoring (strongest signal)
     if (pref.start && pref.end) {
@@ -286,7 +289,21 @@ function scoreSlot(
     // Day-of-week scoring (when no specific ISO dates, e.g. "I prefer Tuesdays")
     if (pref.dayOfWeek !== undefined && !pref.start) {
       if (pref.type === "prefer" && localDayOfWeek === pref.dayOfWeek) score += 40;
+      if (pref.type === "available" && localDayOfWeek === pref.dayOfWeek) score += 25;
       if (pref.type === "avoid" && localDayOfWeek === pref.dayOfWeek) score -= 80;
+      if (pref.type === "unavailable" && localDayOfWeek === pref.dayOfWeek) score -= 150;
+    }
+
+    // Time-of-day scoring (when no specific ISO dates, e.g. "afternoons only")
+    if (pref.timeOfDayStart && pref.timeOfDayEnd && !pref.start) {
+      const [sh, sm] = pref.timeOfDayStart.split(":").map(Number);
+      const [eh, em] = pref.timeOfDayEnd.split(":").map(Number);
+      const inRange = slotMinutes >= sh * 60 + sm && slotMinutes < eh * 60 + em;
+
+      if (pref.type === "prefer" && inRange) score += 40;
+      if (pref.type === "available" && inRange) score += 25;
+      if (pref.type === "avoid" && inRange) score -= 100;
+      if (pref.type === "unavailable" && inRange) score -= 200;
     }
   }
 
@@ -294,44 +311,103 @@ function scoreSlot(
 }
 
 /**
- * Hard-filter scored slots based on "prefer" time preferences.
- * If the AI extracted specific ISO date windows or dayOfWeek preferences,
- * keep only slots that match. Falls back to all slots if the filter yields 0.
+ * Hard-filter scored slots based on time preferences.
+ *
+ * 1. Hard-EXCLUDE slots matching "unavailable" or "avoid" preferences
+ * 2. Hard-INCLUDE only slots matching "prefer" or "available" preferences
+ * 3. Apply time-of-day filtering for general time constraints
+ *
+ * Falls back to unfiltered slots only if filtering would yield 0 results.
  */
 function applyHardFilter(
   slots: ProposedSlot[],
   timePreferences: TimePreference[],
   tz: string,
 ): ProposedSlot[] {
-  const preferPrefs = timePreferences.filter((p) => p.type === "prefer");
-  if (preferPrefs.length === 0) return slots;
+  if (timePreferences.length === 0) return slots;
 
-  // First: try filtering by ISO date windows
-  const isoPrefs = preferPrefs.filter((p) => p.start && p.end);
-  if (isoPrefs.length > 0) {
-    const filtered = slots.filter((slot) =>
-      isoPrefs.some((pref) => {
-        const prefStart = new Date(pref.start!);
-        const prefEnd = new Date(pref.end!);
-        return slot.start < prefEnd && slot.end > prefStart;
-      }),
-    );
-    if (filtered.length > 0) return filtered;
-  }
+  let result = slots;
 
-  // Second: try filtering by dayOfWeek
-  const dowPrefs = preferPrefs.filter((p) => p.dayOfWeek !== undefined);
-  if (dowPrefs.length > 0) {
-    const preferredDays = new Set(dowPrefs.map((p) => p.dayOfWeek!));
-    const filtered = slots.filter((slot) => {
+  // Step 1: Hard-exclude "unavailable" and "avoid" preferences
+  const excludePrefs = timePreferences.filter(
+    (p) => p.type === "unavailable" || p.type === "avoid",
+  );
+  if (excludePrefs.length > 0) {
+    result = result.filter((slot) => {
       const slotDow = getLocalDayOfWeek(slot.start, tz);
-      return preferredDays.has(slotDow);
+      const slotMinutes = getLocalHour(slot.start, tz) * 60 + getLocalMinute(slot.start, tz);
+
+      return !excludePrefs.some((pref) => {
+        // Exclude by ISO date window
+        if (pref.start && pref.end) {
+          const prefStart = new Date(pref.start);
+          const prefEnd = new Date(pref.end);
+          if (slot.start < prefEnd && slot.end > prefStart) return true;
+        }
+        // Exclude by day of week (only when no ISO dates — those are more specific)
+        if (pref.dayOfWeek !== undefined && !pref.start) {
+          if (slotDow === pref.dayOfWeek) return true;
+        }
+        // Exclude by time of day
+        if (pref.timeOfDayStart && pref.timeOfDayEnd && !pref.start) {
+          const [sh, sm] = pref.timeOfDayStart.split(":").map(Number);
+          const [eh, em] = pref.timeOfDayEnd.split(":").map(Number);
+          if (slotMinutes >= sh * 60 + sm && slotMinutes < eh * 60 + em) return true;
+        }
+        return false;
+      });
     });
-    if (filtered.length > 0) return filtered;
   }
 
-  // Fallback: return all slots (don't filter to nothing)
-  return slots;
+  // Step 2: Hard-include by "prefer" and "available" preferences
+  const includePrefs = timePreferences.filter(
+    (p) => p.type === "prefer" || p.type === "available",
+  );
+
+  if (includePrefs.length > 0) {
+    // ISO date window filtering
+    const isoPrefs = includePrefs.filter((p) => p.start && p.end);
+    if (isoPrefs.length > 0) {
+      const filtered = result.filter((slot) =>
+        isoPrefs.some((pref) => {
+          const prefStart = new Date(pref.start!);
+          const prefEnd = new Date(pref.end!);
+          return slot.start < prefEnd && slot.end > prefStart;
+        }),
+      );
+      if (filtered.length > 0) result = filtered;
+    }
+
+    // Day-of-week filtering (only for prefs without ISO dates)
+    const dowPrefs = includePrefs.filter((p) => p.dayOfWeek !== undefined && !p.start);
+    if (dowPrefs.length > 0) {
+      const preferredDays = new Set(dowPrefs.map((p) => p.dayOfWeek!));
+      const filtered = result.filter((slot) => {
+        const slotDow = getLocalDayOfWeek(slot.start, tz);
+        return preferredDays.has(slotDow);
+      });
+      if (filtered.length > 0) result = filtered;
+    }
+
+    // Time-of-day filtering (only for prefs without ISO dates)
+    const todPrefs = includePrefs.filter(
+      (p) => p.timeOfDayStart && p.timeOfDayEnd && !p.start,
+    );
+    if (todPrefs.length > 0) {
+      const filtered = result.filter((slot) => {
+        const slotMinutes = getLocalHour(slot.start, tz) * 60 + getLocalMinute(slot.start, tz);
+        return todPrefs.some((pref) => {
+          const [sh, sm] = pref.timeOfDayStart!.split(":").map(Number);
+          const [eh, em] = pref.timeOfDayEnd!.split(":").map(Number);
+          return slotMinutes >= sh * 60 + sm && slotMinutes < eh * 60 + em;
+        });
+      });
+      if (filtered.length > 0) result = filtered;
+    }
+  }
+
+  // Fallback: return all slots if filtering eliminated everything
+  return result.length > 0 ? result : slots;
 }
 
 /**
@@ -480,6 +556,15 @@ function getLocalHour(utcDate: Date, tz: string): number {
     hour12: false,
   }).formatToParts(utcDate);
   return parseInt(parts.find(p => p.type === "hour")!.value);
+}
+
+/** Get the local minute for a UTC date in a given timezone. */
+function getLocalMinute(utcDate: Date, tz: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    minute: "numeric",
+  }).formatToParts(utcDate);
+  return parseInt(parts.find(p => p.type === "minute")!.value);
 }
 
 /** Get the local day of week for a UTC date in a given timezone. */
