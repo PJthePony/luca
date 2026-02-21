@@ -17,6 +17,15 @@ export interface ResolvedThread {
   isNewMeeting: boolean;
 }
 
+export type ResolveFailureReason =
+  | "unregistered_sender"
+  | "no_thread_context"
+  | "unknown";
+
+export interface ResolveFailure {
+  reason: ResolveFailureReason;
+}
+
 const LUCA_EMAIL = `luca@${env.MAILGUN_DOMAIN}`;
 
 /**
@@ -28,7 +37,7 @@ const LUCA_EMAIL = `luca@${env.MAILGUN_DOMAIN}`;
  */
 export async function resolveThread(
   email: InboundEmail,
-): Promise<ResolvedThread | null> {
+): Promise<ResolvedThread | ResolveFailure> {
   // 1. Try to match against existing threads by message ID references
   const refIds = parseReferences(email.inReplyTo, email.references);
 
@@ -62,6 +71,9 @@ export async function resolveThread(
           isNewMeeting: false,
         };
       }
+
+      // Thread exists but meeting/organizer data is missing
+      return { reason: "no_thread_context" };
     }
   }
 
@@ -78,11 +90,11 @@ export async function resolveThread(
     console.warn(
       `Direct email to Luca from ${email.from} with no thread context`,
     );
-    return null;
+    return { reason: "no_thread_context" };
   }
 
   if (!isLucaInCc) {
-    return null;
+    return { reason: "unknown" };
   }
 
   // Find the organizer — the sender of this email must be a registered user
@@ -92,7 +104,7 @@ export async function resolveThread(
 
   if (!organizer) {
     console.warn(`Email from unregistered user: ${email.from}`);
-    return null;
+    return { reason: "unregistered_sender" };
   }
 
   // Create a new meeting
@@ -159,6 +171,13 @@ export async function resolveThread(
     .returning();
 
   return { meeting, thread, organizer, isNewMeeting: true };
+}
+
+/** Type guard to check if a resolve result is a failure. */
+export function isResolveFailure(
+  result: ResolvedThread | ResolveFailure,
+): result is ResolveFailure {
+  return "reason" in result;
 }
 
 /** Parse In-Reply-To and References headers into an array of message IDs. */

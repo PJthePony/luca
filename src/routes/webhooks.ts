@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { emailMessages, meetings, users } from "../db/schema.js";
 import { parseInboundWebhook, sendEmail } from "../lib/mailgun.js";
-import { resolveThread } from "../services/thread-resolver.js";
+import { resolveThread, isResolveFailure } from "../services/thread-resolver.js";
 import { parseInboundEmail } from "../services/ai-parser.js";
 import { getAttendeeEmails } from "../services/queries.js";
 import {
@@ -18,6 +18,7 @@ import {
 import type { IntentContext } from "../services/intent-handlers.js";
 import { EmailDirection } from "../types/index.js";
 import type { GoogleTokens } from "../types/index.js";
+import { notifyUser } from "../services/notification.js";
 import { env } from "../config.js";
 
 export const webhookRoutes = new Hono();
@@ -28,6 +29,8 @@ export const webhookRoutes = new Hono();
  */
 webhookRoutes.post("/inbound", async (c) => {
   const body = await c.req.parseBody();
+  let resolvedMeetingId: string | undefined;
+  let resolvedOrganizerId: string | undefined;
 
   try {
     const email = parseInboundWebhook(body as Record<string, unknown>);
@@ -85,12 +88,42 @@ webhookRoutes.post("/inbound", async (c) => {
 
     // Resolve the thread / meeting (existing scheduling flow)
     const resolved = await resolveThread(email);
-    if (!resolved) {
-      console.warn(`Could not resolve thread for email from ${email.from}`);
-      return c.json({ status: "unresolved" });
+    if (isResolveFailure(resolved)) {
+      console.warn(`Could not resolve thread for email from ${email.from}: ${resolved.reason}`);
+
+      const replySubject = email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`;
+      const replyHeaders: Record<string, string> = {};
+      if (email.messageId) replyHeaders["In-Reply-To"] = email.messageId;
+
+      if (resolved.reason === "unregistered_sender") {
+        await sendEmail({
+          to: [email.from],
+          subject: replySubject,
+          text: `Hey! I'm Luca, and I'd love to help schedule this meeting, but I don't have an account set up for your email address yet.\n\nAsk the person you're scheduling with to CC me (luca@${env.MAILGUN_DOMAIN}) from their account, and I'll take it from there.\n\n- Luca`,
+          headers: replyHeaders,
+        });
+      } else if (resolved.reason === "no_thread_context") {
+        await sendEmail({
+          to: [email.from],
+          subject: replySubject,
+          text: `Hey! I got your email, but I can't find the scheduling thread it belongs to. This can happen if the original thread was lost or if the email headers changed.\n\nTo start fresh, send a new email to the person you want to meet and CC me (luca@${env.MAILGUN_DOMAIN}) — I'll find times that work for everyone.\n\n- Luca`,
+          headers: replyHeaders,
+        });
+      } else {
+        await sendEmail({
+          to: [email.from],
+          subject: replySubject,
+          text: `Hey! I got your email, but I wasn't sure what to do with it. To schedule a meeting, CC me (luca@${env.MAILGUN_DOMAIN}) on an email thread with the people you want to meet.\n\n- Luca`,
+          headers: replyHeaders,
+        });
+      }
+
+      return c.json({ status: "unresolved", reason: resolved.reason });
     }
 
     const { meeting, thread, organizer } = resolved;
+    resolvedMeetingId = meeting.id;
+    resolvedOrganizerId = organizer.id;
     const tz = organizer.timezone || "America/New_York";
 
     // Store the inbound message
@@ -171,6 +204,59 @@ webhookRoutes.post("/inbound", async (c) => {
     console.error("=== WEBHOOK ERROR ===");
     console.error("Error:", err);
     console.error("Stack:", err instanceof Error ? err.stack : "no stack");
+
+    // Try to notify the sender so the email doesn't silently disappear
+    try {
+      const email = parseInboundWebhook(body as Record<string, unknown>);
+      const replySubject = email.subject.startsWith("Re:") ? email.subject : `Re: ${email.subject}`;
+      const replyHeaders: Record<string, string> = {};
+      if (email.messageId) replyHeaders["In-Reply-To"] = email.messageId;
+
+      const isOAuthError = err instanceof Error && (
+        err.message.includes("invalid_grant") ||
+        err.message.includes("Token has been expired or revoked")
+      );
+
+      if (isOAuthError) {
+        // Mark meeting for automatic retry after reconnect
+        if (resolvedMeetingId) {
+          await db
+            .update(meetings)
+            .set({ status: "awaiting_reauth", updatedAt: new Date() })
+            .where(eq(meetings.id, resolvedMeetingId));
+        }
+
+        // Notify organizer via iMessage
+        if (resolvedOrganizerId && resolvedMeetingId) {
+          const failedMeeting = await db.query.meetings.findFirst({
+            where: eq(meetings.id, resolvedMeetingId),
+          });
+          await notifyUser({
+            type: "google_token_expired",
+            userId: resolvedOrganizerId,
+            meetingTitle: failedMeeting?.title ?? email.subject,
+            meetingShortId: failedMeeting?.shortId ?? "",
+          });
+        }
+
+        await sendEmail({
+          to: [email.from],
+          subject: replySubject,
+          text: `Hey! I tried to check calendar availability for this meeting, but my connection to Google Calendar has expired. The organizer needs to reconnect their calendar at ${env.APP_URL}/settings.\n\nOnce that's done, I'll automatically pick back up and send available times.\n\n- Luca`,
+          headers: replyHeaders,
+        });
+      } else {
+        await sendEmail({
+          to: [email.from],
+          subject: replySubject,
+          text: `Hey! Something went wrong while I was processing your email. I've logged the error and will try to get it sorted out.\n\nIn the meantime, you can try again by replying to this thread.\n\n- Luca`,
+          headers: replyHeaders,
+        });
+      }
+    } catch (replyErr) {
+      console.error("Failed to send error reply:", replyErr);
+    }
+
     return c.json({ status: "error", message: "Internal server error" }, 500);
   }
 });

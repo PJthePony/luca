@@ -7,7 +7,8 @@ import { env } from "../config.js";
 export type NotificationType =
   | "meeting_confirmed"
   | "meeting_rescheduled"
-  | "meeting_cancelled";
+  | "meeting_cancelled"
+  | "google_token_expired";
 
 interface NotificationPayload {
   type: NotificationType;
@@ -42,5 +43,7 @@ function formatMessage(payload: NotificationPayload): string {
       return `Your meeting "${payload.meetingTitle}" is being rescheduled. ${meetingUrl}`;
     case "meeting_cancelled":
       return `Your meeting "${payload.meetingTitle}" has been cancelled.`;
+    case "google_token_expired":
+      return `Luca's connection to your Google Calendar has expired. A scheduling request for "${payload.meetingTitle}" couldn't be processed. Reconnect at ${env.APP_URL}/settings — Luca will retry automatically.`;
   }
 }

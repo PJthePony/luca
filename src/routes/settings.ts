@@ -15,6 +15,8 @@ import { fetchSettingsData } from "../services/queries.js";
 import type { MeetingTypeWithLocations } from "../services/queries.js";
 import type { GoogleTokens } from "../types/index.js";
 import { fontLinks, baseStyles, settingsStyles, headerStyles, logoSvg } from "../lib/styles.js";
+import { findRetryableMeetings, retryMeetingById, dismissRetryableMeeting } from "../services/retry.js";
+import type { RetryableMeeting } from "../services/retry.js";
 
 type User = typeof users.$inferSelect;
 
@@ -29,7 +31,10 @@ settingsRoutes.get("/", async (c) => {
   const user = c.get("user");
   const { calendars, types, rules } = await fetchSettingsData(user.id);
 
-  return c.html(renderSettingsPage(user, calendars, types, rules, env.GOOGLE_MAPS_API_KEY));
+  const reconnected = c.req.query("reconnected") === "true";
+  const retryable = reconnected ? await findRetryableMeetings(user.id) : [];
+
+  return c.html(renderSettingsPage(user, calendars, types, rules, env.GOOGLE_MAPS_API_KEY, retryable));
 });
 
 // ── API: Settings Body (partial HTML for in-place refresh) ─────────────────
@@ -366,6 +371,35 @@ settingsRoutes.post("/availability/:ruleId/delete", async (c) => {
   return c.json({ status: "deleted" });
 });
 
+// ── API: Retry/Dismiss Meetings ──────────────────────────────────────────────
+
+settingsRoutes.post("/retry/:meetingId", async (c) => {
+  const userId = c.get("user").id;
+  const { meetingId } = c.req.param();
+
+  try {
+    const success = await retryMeetingById(meetingId, userId);
+    if (success) {
+      return c.json({ status: "retried" });
+    }
+    return c.json({ error: "Meeting not found or could not be retried" }, 404);
+  } catch (err) {
+    console.error("Retry failed:", err);
+    return c.json({ error: "Retry failed" }, 500);
+  }
+});
+
+settingsRoutes.post("/retry/:meetingId/dismiss", async (c) => {
+  const userId = c.get("user").id;
+  const { meetingId } = c.req.param();
+
+  const success = await dismissRetryableMeeting(meetingId, userId);
+  if (success) {
+    return c.json({ status: "dismissed" });
+  }
+  return c.json({ error: "Meeting not found" }, 404);
+});
+
 // ── HTML Rendering ──────────────────────────────────────────────────────────
 
 /** Convert "HH:MM" or "HH:MM:SS" 24-hour time to 12-hour display (e.g. "9:00 AM"). */
@@ -414,6 +448,7 @@ export function renderSettingsBody(
   types: MeetingTypeWithLocations[],
   rules: (typeof availabilityRules.$inferSelect)[],
   googleMapsApiKey?: string,
+  retryableMeetings?: RetryableMeeting[],
 ): string {
   const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -503,7 +538,32 @@ export function renderSettingsBody(
     })
     .join("\n");
 
+  const retryBanner = retryableMeetings && retryableMeetings.length > 0
+    ? `
+    <!-- Retry Banner -->
+    <div id="retryBanner" class="card" style="border: 1px solid #f97316; margin-bottom: 1.5rem;">
+      <div class="card-header">
+        <strong style="color: #f97316;">Google Calendar Reconnected</strong>
+        <p class="text-sm text-muted" style="margin: 0.25rem 0 0;">These scheduling requests failed while your calendar was disconnected. Select which ones to retry.</p>
+      </div>
+      ${retryableMeetings.map((m) => `
+        <div class="card-row" id="retry-${m.id}" style="align-items:center;">
+          <div style="flex:1;">
+            <strong>${m.title ?? "Untitled meeting"}</strong>
+            <div class="text-sm text-muted">${m.attendees.join(", ")} &middot; ${new Date(m.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+          </div>
+          <div style="display:flex;gap:0.5rem;">
+            <button class="btn btn-primary btn-sm" onclick="retryMeeting('${m.id}', this)">Retry</button>
+            <button class="btn-secondary btn-sm" onclick="dismissMeeting('${m.id}', this)">Dismiss</button>
+          </div>
+        </div>
+      `).join("\n")}
+    </div>`
+    : "";
+
   return `
+    ${retryBanner}
+
     <!-- Timezone Section -->
     <h2>Timezone</h2>
     <div class="form-group" style="display:flex;gap:0.5rem;align-items:flex-end;">
@@ -518,8 +578,11 @@ export function renderSettingsBody(
     <!-- Calendars Section -->
     <h2>Calendars</h2>
     <p class="text-sm text-muted" style="margin-bottom: 0.75rem;">Toggle which calendars Luca checks for conflicts when proposing meeting times.</p>
-    ${calendarRows || '<p class="text-sm text-muted">No calendars synced yet. Connect Google Calendar first.</p>'}
-    <button class="btn btn-secondary" style="margin-top: 0.5rem;" onclick="refreshCalendars()">Refresh Calendars</button>
+    ${calendarRows || '<p class="text-sm text-muted">No calendars synced yet. Connect Google Calendar below.</p>'}
+    <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+      <button class="btn btn-secondary" onclick="refreshCalendars()">Refresh Calendars</button>
+      <button class="btn btn-secondary" onclick="reconnectGoogle()">Reconnect Google Calendar</button>
+    </div>
 
     <!-- Work Calendar Section -->
     <h2>Work Calendar</h2>
@@ -714,6 +777,59 @@ export function renderSettingsBody(
       } catch (e) {
         toast('Network error');
       }
+    }
+
+    // ── Meeting Retry ──────────────────
+
+    async function retryMeeting(meetingId, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Retrying...';
+      try {
+        const res = await fetch('/settings/retry/' + meetingId, { method: 'POST' });
+        if (res.ok) {
+          document.getElementById('retry-' + meetingId).style.display = 'none';
+          toast('Meeting retried — time proposals sent');
+          checkRetryBannerEmpty();
+        } else {
+          const data = await res.json();
+          toast('Error: ' + (data.error || 'Retry failed'));
+          btn.disabled = false;
+          btn.textContent = 'Retry';
+        }
+      } catch (e) {
+        toast('Network error');
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+      }
+    }
+
+    async function dismissMeeting(meetingId, btn) {
+      btn.disabled = true;
+      try {
+        const res = await fetch('/settings/retry/' + meetingId + '/dismiss', { method: 'POST' });
+        if (res.ok) {
+          document.getElementById('retry-' + meetingId).style.display = 'none';
+          toast('Meeting dismissed');
+          checkRetryBannerEmpty();
+        } else {
+          btn.disabled = false;
+        }
+      } catch (e) {
+        btn.disabled = false;
+      }
+    }
+
+    function checkRetryBannerEmpty() {
+      const banner = document.getElementById('retryBanner');
+      if (!banner) return;
+      const visible = banner.querySelectorAll('.card-row:not([style*="display: none"])');
+      if (visible.length === 0) banner.style.display = 'none';
+    }
+
+    // ── Google Reconnect ──────────────────
+
+    function reconnectGoogle() {
+      window.location.href = '/auth/google?userId=${user.id}';
     }
 
     // ── Calendars ──────────────────
@@ -972,8 +1088,9 @@ function renderSettingsPage(
   types: MeetingTypeWithLocations[],
   rules: (typeof availabilityRules.$inferSelect)[],
   googleMapsApiKey?: string,
+  retryableMeetings?: RetryableMeeting[],
 ): string {
-  const body = renderSettingsBody(user, calendars, types, rules, googleMapsApiKey);
+  const body = renderSettingsBody(user, calendars, types, rules, googleMapsApiKey, retryableMeetings);
 
   return `<!DOCTYPE html>
 <html lang="en">

@@ -6,6 +6,7 @@ import { getAuthUrl, exchangeCode, listCalendars } from "../lib/google.js";
 import { verifySupabaseJwt, parseCookie } from "../lib/supabase-jwt.js";
 import type { GoogleTokens } from "../types/index.js";
 import { seedDefaults } from "../lib/seed-defaults.js";
+import { findRetryableMeetings } from "../services/retry.js";
 
 export const authRoutes = new Hono();
 
@@ -220,6 +221,16 @@ authRoutes.get("/google/callback", async (c) => {
     console.log(`Synced ${calendars.length} calendars for user ${userId}`);
   } catch (err) {
     console.warn("Failed to sync calendars:", err);
+  }
+
+  // Check if there are meetings to retry after reconnect
+  try {
+    const retryable = await findRetryableMeetings(userId);
+    if (retryable.length > 0) {
+      return c.redirect("/settings?reconnected=true");
+    }
+  } catch (err) {
+    console.warn("Failed to check retryable meetings:", err);
   }
 
   return c.redirect("/settings");
