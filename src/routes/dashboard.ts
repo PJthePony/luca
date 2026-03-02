@@ -448,6 +448,10 @@ function renderDashboardPage(
     <div id="meetingsList">
       ${meetingCards || `<div class="empty-state"><p>No meetings yet.</p><p class="text-sm">CC luca@tanzillo.ai on an email to get started.</p></div>`}
     </div>
+    <div id="emptyFilter" class="empty-state" style="display:none;">
+      <p>No upcoming meetings.</p>
+      <p class="text-sm">CC <strong>luca@tanzillo.ai</strong> on any email to schedule one.</p>
+    </div>
     ${hasMore ? `<div id="loadMoreWrap" style="text-align:center;padding:1.5rem 0;"><button class="btn btn-secondary" id="loadMoreBtn" onclick="loadMore()">Load more</button></div>` : ""}
   </div>
 
@@ -551,21 +555,27 @@ function renderDashboardPage(
 
     function filterMeetings(value) {
       const cards = document.querySelectorAll('.meeting-card');
+      let visibleCount = 0;
       cards.forEach(card => {
         const status = card.dataset.status;
         const upcoming = card.dataset.upcoming === 'true';
+        let show = false;
         if (value === 'all') {
-          card.style.display = '';
+          show = true;
         } else if (value === 'upcoming') {
-          card.style.display = upcoming ? '' : 'none';
+          show = upcoming;
         } else if (value === 'active') {
-          card.style.display = ['draft', 'proposed', 'rescheduling'].includes(status) ? '' : 'none';
+          show = ['draft', 'proposed', 'rescheduling'].includes(status);
         } else if (value === 'confirmed') {
-          card.style.display = (status === 'confirmed' || status === 'completed') ? '' : 'none';
+          show = (status === 'confirmed' || status === 'completed');
         } else if (value === 'cancelled') {
-          card.style.display = status === 'cancelled' ? '' : 'none';
+          show = status === 'cancelled';
         }
+        card.style.display = show ? '' : 'none';
+        if (show) visibleCount++;
       });
+      const emptyEl = document.getElementById('emptyFilter');
+      if (emptyEl) emptyEl.style.display = (cards.length > 0 && visibleCount === 0) ? '' : 'none';
     }
 
     // Apply default filter on page load
