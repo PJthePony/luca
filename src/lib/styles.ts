@@ -862,6 +862,7 @@ export const dashboardStyles = `
   .status-badge.confirmed { background: #d1fae5; color: #065f46; }
   .status-badge.rescheduling { background: #dbeafe; color: #1d4ed8; }
   .status-badge.cancelled { background: #fee2e2; color: #991b1b; }
+  .status-badge.completed { background: #e2e8f0; color: #475569; }
 
   /* ── Times section ──────────────────────────── */
   .meeting-times {
@@ -949,6 +950,10 @@ export const dashboardStyles = `
     background: none; color: var(--nxb-color-danger); border: 1px solid #fecaca;
   }
   .action-btn.cancel:hover { background: #fee2e2; }
+  .action-btn.ignore {
+    background: none; color: var(--nxb-color-text-muted); border: 1px solid var(--nxb-color-border);
+  }
+  .action-btn.ignore:hover { background: var(--nxb-color-bg); color: var(--nxb-color-text-secondary); }
   .action-btn.comms {
     background: none; color: var(--nxb-color-primary); border: 1px solid var(--nxb-color-border);
   }

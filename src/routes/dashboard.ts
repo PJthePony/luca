@@ -183,6 +183,39 @@ dashboardRoutes.post("/meetings/:meetingId/cancel", async (c) => {
   return c.json({ status: "cancelled" });
 });
 
+// ── API: Ignore a Meeting (cancel silently, no emails) ───────────────────────
+
+dashboardRoutes.post("/meetings/:meetingId/ignore", async (c) => {
+  const { meetingId } = c.req.param();
+  const user = c.get("user");
+
+  const meeting = await db.query.meetings.findFirst({
+    where: eq(meetings.id, meetingId),
+  });
+  if (!meeting || meeting.organizerId !== user.id) {
+    return c.json({ error: "Not found" }, 404);
+  }
+
+  if (meeting.status === "cancelled") {
+    return c.json({ error: "Meeting is already cancelled" }, 400);
+  }
+
+  const tokens = user.googleTokens as GoogleTokens;
+  if (!tokens) {
+    return c.json({ error: "Calendar not connected" }, 400);
+  }
+
+  try {
+    await cancelMeeting(meetingId, tokens);
+  } catch (e: unknown) {
+    console.error("ignoreMeeting error:", e);
+    const message = e instanceof Error ? e.message : "Failed to ignore meeting";
+    return c.json({ error: message }, 500);
+  }
+
+  return c.json({ status: "ignored" });
+});
+
 // ── API: Nudge a Participant ─────────────────────────────────────────────────
 
 dashboardRoutes.post("/meetings/:meetingId/nudge", async (c) => {
@@ -404,6 +437,7 @@ function renderDashboardPage(
         <h1>On the Books</h1>
       </div>
       <select class="filter-select" onchange="filterMeetings(this.value)">
+        <option value="upcoming">Upcoming</option>
         <option value="all">All</option>
         <option value="active">Active</option>
         <option value="confirmed">Confirmed</option>
@@ -496,6 +530,9 @@ function renderDashboardPage(
         if (data.html) {
           document.getElementById('meetingsList').insertAdjacentHTML('beforeend', data.html);
           meetingsOffset += ${PAGE_SIZE};
+          // Re-apply current filter to newly loaded cards
+          const currentFilter = document.querySelector('.filter-select').value;
+          filterMeetings(currentFilter);
         }
         if (!data.hasMore) {
           document.getElementById('loadMoreWrap').remove();
@@ -516,17 +553,23 @@ function renderDashboardPage(
       const cards = document.querySelectorAll('.meeting-card');
       cards.forEach(card => {
         const status = card.dataset.status;
+        const upcoming = card.dataset.upcoming === 'true';
         if (value === 'all') {
           card.style.display = '';
+        } else if (value === 'upcoming') {
+          card.style.display = upcoming ? '' : 'none';
         } else if (value === 'active') {
           card.style.display = ['draft', 'proposed', 'rescheduling'].includes(status) ? '' : 'none';
         } else if (value === 'confirmed') {
-          card.style.display = status === 'confirmed' ? '' : 'none';
+          card.style.display = (status === 'confirmed' || status === 'completed') ? '' : 'none';
         } else if (value === 'cancelled') {
           card.style.display = status === 'cancelled' ? '' : 'none';
         }
       });
     }
+
+    // Apply default filter on page load
+    filterMeetings('upcoming');
 
     // ── Settings Modal ────────────────
 
@@ -624,6 +667,22 @@ function renderDashboardPage(
         if (res.ok) {
           toast('Nudge sent to ' + data.count + ' participant(s)');
         } else {
+          toast('Error: ' + (data.error || 'Failed'));
+        }
+      } catch (e) {
+        toast('Network error');
+      }
+    }
+
+    async function ignoreMeeting(meetingId) {
+      if (!confirm('Ignore this meeting? It will be cancelled without notifying anyone.')) return;
+      try {
+        const res = await fetch('/dashboard/meetings/' + meetingId + '/ignore', { method: 'POST' });
+        if (res.ok) {
+          toast('Meeting ignored');
+          setTimeout(() => location.reload(), 800);
+        } else {
+          const data = await res.json();
           toast('Error: ' + (data.error || 'Failed'));
         }
       } catch (e) {
@@ -730,6 +789,10 @@ function renderDashboardPage(
 function renderMeetingCard(d: MeetingData, tz: string): string {
   const m = d.meeting;
   const isCancelled = m.status === "cancelled";
+  const now = new Date();
+  const isCompleted = m.status === "confirmed" && m.confirmedEnd != null && m.confirmedEnd < now;
+  const displayStatus = isCompleted ? "completed" : m.status;
+  const isUpcoming = !isCancelled && !isCompleted;
   const attendees = d.participants.filter((p) => p.role !== "organizer");
   const attendeeStr = attendees.map((p) => p.name || p.email).join(", ");
   const rsvpStr = attendees.length > 0
@@ -740,7 +803,7 @@ function renderMeetingCard(d: MeetingData, tz: string): string {
   if (isCancelled) {
     const dateStr = m.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: tz });
     return `
-    <div class="meeting-card cancelled" data-status="cancelled">
+    <div class="meeting-card cancelled" data-status="cancelled" data-upcoming="false">
       <div class="meeting-card-header">
         <div style="white-space:nowrap;">
           <span class="status-badge cancelled">Cancelled</span>
@@ -786,22 +849,23 @@ function renderMeetingCard(d: MeetingData, tz: string): string {
 
   // Actions
   const actions: string[] = [];
-  if (["proposed", "rescheduling"].includes(m.status)) {
-    actions.push(`<button class="action-btn nudge" onclick="nudgeMeeting('${m.id}')">Nudge</button>`);
-  }
-  if (["proposed", "confirmed"].includes(m.status)) {
-    actions.push(`<button class="action-btn reschedule" onclick="rescheduleMeeting('${m.id}')">Reschedule</button>`);
-  }
-  if (m.status !== "cancelled") {
+  if (!isCompleted) {
+    if (["proposed", "rescheduling"].includes(m.status)) {
+      actions.push(`<button class="action-btn nudge" onclick="nudgeMeeting('${m.id}')">Nudge</button>`);
+    }
+    if (["proposed", "confirmed"].includes(m.status)) {
+      actions.push(`<button class="action-btn reschedule" onclick="rescheduleMeeting('${m.id}')">Reschedule</button>`);
+    }
     actions.push(`<button class="action-btn cancel" onclick="cancelMeeting('${m.id}')">Cancel</button>`);
+    actions.push(`<button class="action-btn ignore" onclick="ignoreMeeting('${m.id}')">Ignore</button>`);
   }
   actions.push(`<button class="action-btn comms" onclick="openCommsModal('${m.id}', '${(m.title ?? "Meeting").replace(/'/g, "\\'")}')">View Comms${d.messageCount > 0 ? ` (${d.messageCount})` : ""}</button>`);
 
   return `
-  <div class="meeting-card" data-status="${m.status}">
+  <div class="meeting-card" data-status="${displayStatus}" data-upcoming="${isUpcoming}">
     <div class="meeting-card-header">
       <div class="meeting-title">${m.title ?? "Meeting"}</div>
-      <span class="status-badge ${m.status}">${m.status}</span>
+      <span class="status-badge ${displayStatus}">${displayStatus}</span>
     </div>
     <div class="meeting-meta">${metaParts.join("  ·  ")}</div>
     ${timesHtml}
