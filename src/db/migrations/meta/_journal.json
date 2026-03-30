@@ -64,6 +64,13 @@
       "when": 1771394177063,
       "tag": "0008_rare_leech",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774896729553,
+      "tag": "0009_perpetual_kid_colt",
+      "breakpoints": true
     }
   ]
 }

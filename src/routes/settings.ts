@@ -511,6 +511,10 @@ export function renderSettingsBody(
         </div>`
             : ""
         }
+        <div class="preview-windows-section">
+          <button class="btn-secondary btn-sm" id="preview-btn-${t.id}" onclick="toggleSettingsPreview('${t.id}', this)">Preview windows</button>
+          <div id="settings-preview-${t.id}" class="preview-panel" style="display:none;"></div>
+        </div>
       </div>`,
     )
     .join("\n");

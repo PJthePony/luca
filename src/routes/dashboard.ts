@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, count as dbCount } from "drizzle-orm";
+import { eq, and, count as dbCount } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   users,
@@ -11,16 +11,20 @@ import {
   meetingLocations,
   availabilityRules,
   userCalendars,
+  ignoredCalendarEvents,
 } from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { cancelMeeting, startRescheduling, proposeTimes } from "../services/meeting-machine.js";
 import { sendThreadedReply } from "../services/email.js";
-import { findAvailableSlots } from "../services/slot-proposer.js";
+import { findAvailableSlots, previewAvailableSlots } from "../services/slot-proposer.js";
 import { notifyUser } from "../services/notification.js";
-import { fetchMeetingsData, fetchSettingsData, getAttendeeEmails } from "../services/queries.js";
+import { fetchMeetingsData, fetchSettingsData, getAttendeeEmails, isVideoCallType } from "../services/queries.js";
 import type { MeetingData, MeetingTypeWithLocations } from "../services/queries.js";
 import type { GoogleTokens } from "../types/index.js";
 import { env } from "../config.js";
+import { createGmailDraft } from "../lib/google.js";
+import { formatSlot, buildCalendarDescription } from "../services/intent-handlers.js";
+import { nanoid } from "nanoid";
 import {
   fontLinks,
   baseStyles,
@@ -377,6 +381,242 @@ dashboardRoutes.post("/meetings/:meetingId/agenda", async (c) => {
   return c.json({ status: "ok", agenda });
 });
 
+// ── API: Preview Available Slots ─────────────────────────────────────────────
+
+dashboardRoutes.get("/preview-slots", async (c) => {
+  const user = c.get("user");
+  const meetingTypeId = c.req.query("meetingTypeId") || null;
+  const tz = user.timezone || "America/New_York";
+
+  // Look up meeting type for duration
+  let durationMin = 30;
+  if (meetingTypeId) {
+    const mType = await db.query.meetingTypes.findFirst({
+      where: eq(meetingTypes.id, meetingTypeId),
+    });
+    if (mType) durationMin = mType.defaultDuration;
+  }
+
+  try {
+    const { slots, blockingEvents } = await previewAvailableSlots(
+      user.id,
+      durationMin,
+      10,
+      meetingTypeId,
+    );
+
+    const slotsHtml = slots.length > 0
+      ? slots.map((s) => {
+          const day = s.start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz });
+          const startTime = s.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+          const endTime = s.end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+          return `<div class="preview-slot"><span class="preview-slot-day">${day}</span><span class="preview-slot-time">${startTime} - ${endTime}</span></div>`;
+        }).join("\n")
+      : `<div class="preview-empty">No available windows found in the next 10 days.</div>`;
+
+    const eventsHtml = blockingEvents.map((e) => {
+      const day = e.start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz });
+      const startTime = e.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+      const endTime = e.end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+      const ignoredClass = e.isIgnored ? "ignored" : "";
+      const btnLabel = e.isIgnored ? "Restore" : "Ignore";
+      const btnAction = e.isIgnored ? "unignoreEvent" : "ignoreEvent";
+      return `<div class="blocking-event ${ignoredClass}">
+        <div class="blocking-event-info">
+          <span class="blocking-event-name">${e.summary}</span>
+          <span class="blocking-event-time">${day}, ${startTime} - ${endTime}</span>
+        </div>
+        <button class="btn btn-sm btn-secondary" onclick="${btnAction}('${e.calendarId}', '${e.eventId}', '${e.summary.replace(/'/g, "\\'")}', this)">${btnLabel}</button>
+      </div>`;
+    }).join("\n");
+
+    return c.json({ slotsHtml, eventsHtml, slotCount: slots.length });
+  } catch (e: unknown) {
+    console.error("preview-slots error:", e);
+    const message = e instanceof Error ? e.message : "Failed to preview slots";
+    return c.json({ error: message }, 500);
+  }
+});
+
+// ── API: Ignore a Calendar Event ─────────────────────────────────────────────
+
+dashboardRoutes.post("/events/ignore", async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json<{ calendarId: string; googleEventId: string; summary?: string }>();
+
+  await db
+    .insert(ignoredCalendarEvents)
+    .values({
+      userId: user.id,
+      calendarId: body.calendarId,
+      googleEventId: body.googleEventId,
+      summary: body.summary || null,
+    })
+    .onConflictDoNothing();
+
+  return c.json({ status: "ignored" });
+});
+
+// ── API: Unignore a Calendar Event ───────────────────────────────────────────
+
+dashboardRoutes.post("/events/unignore", async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json<{ calendarId: string; googleEventId: string }>();
+
+  await db
+    .delete(ignoredCalendarEvents)
+    .where(
+      and(
+        eq(ignoredCalendarEvents.userId, user.id),
+        eq(ignoredCalendarEvents.calendarId, body.calendarId),
+        eq(ignoredCalendarEvents.googleEventId, body.googleEventId),
+      ),
+    );
+
+  return c.json({ status: "unignored" });
+});
+
+// ── API: Create a New Meeting ────────────────────────────────────────────────
+
+dashboardRoutes.post("/meetings/create", async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json<{
+    participantEmails: string[];
+    meetingTypeId?: string;
+    title?: string;
+    notes?: string;
+  }>();
+
+  const tokens = user.googleTokens as GoogleTokens;
+  if (!tokens) {
+    return c.json({ error: "Calendar not connected" }, 400);
+  }
+
+  const tz = user.timezone || "America/New_York";
+
+  // Resolve meeting type
+  let effectiveDuration = 30;
+  let resolvedType: typeof meetingTypes.$inferSelect | undefined;
+  if (body.meetingTypeId) {
+    const mType = await db.query.meetingTypes.findFirst({
+      where: and(
+        eq(meetingTypes.id, body.meetingTypeId),
+        eq(meetingTypes.userId, user.id),
+      ),
+    });
+    if (mType) {
+      resolvedType = mType;
+      effectiveDuration = mType.defaultDuration;
+    }
+  }
+
+  // Build title
+  const participantNames = body.participantEmails.map((e) => e.split("@")[0]);
+  const allNames = [user.name.split(/\s+/)[0], ...participantNames];
+  const nameList = allNames.length <= 2
+    ? allNames.join(" and ")
+    : allNames.slice(0, -1).join(", ") + " and " + allNames[allNames.length - 1];
+  const meetingTitle = body.title
+    || (resolvedType ? `${resolvedType.name} for ${nameList}` : `Meeting for ${nameList}`);
+
+  // Create meeting record
+  const shortId = nanoid(8);
+  const [meeting] = await db
+    .insert(meetings)
+    .values({
+      shortId,
+      organizerId: user.id,
+      title: meetingTitle,
+      status: "draft",
+      durationMin: effectiveDuration,
+      meetingTypeId: body.meetingTypeId || null,
+      notes: body.notes || null,
+      location: resolvedType?.defaultLocation || null,
+    })
+    .returning();
+
+  // Add participants
+  for (const email of body.participantEmails) {
+    await db.insert(participants).values({
+      meetingId: meeting.id,
+      email: email.trim(),
+      role: "attendee",
+    });
+  }
+  // Add organizer as participant
+  await db.insert(participants).values({
+    meetingId: meeting.id,
+    email: user.email,
+    role: "organizer",
+  });
+
+  // Find available slots
+  const slots = await findAvailableSlots(
+    user.id,
+    meeting.id,
+    effectiveDuration,
+    [],
+    10,
+    body.meetingTypeId,
+  );
+
+  if (slots.length === 0) {
+    return c.json({ error: "No available times found in the next 10 days" }, 400);
+  }
+
+  // Create tentative calendar holds
+  const isVideoCall = resolvedType?.addGoogleMeet ?? false;
+  const calendarDescription = buildCalendarDescription(body.notes || null, []);
+
+  const proposeResult = await proposeTimes(
+    meeting.id,
+    slots.map((s) => ({ start: s.start, end: s.end })),
+    tokens,
+    meetingTitle,
+    calendarDescription,
+    {
+      addGoogleMeet: isVideoCall,
+      location: resolvedType?.defaultLocation ?? undefined,
+      timeZone: tz,
+    },
+  );
+
+  // Compose email body
+  const timeList = proposeResult.slots
+    .map((s, i) => `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`)
+    .join("\n");
+
+  let meetNote = "";
+  if (isVideoCall && proposeResult.meetLink) {
+    meetNote = "\n\nA Google Meet link will be included in the calendar invite.";
+  }
+
+  const emailBody = `Hi,\n\nI'd like to schedule ${meetingTitle.toLowerCase().startsWith("meeting") ? "a" : ""} ${meetingTitle}. Here are some times that work:\n\n${timeList}\n\nJust reply with your preferred option, or let me know if none of these work and I'll find more times.${meetNote}\n\nYou can also pick a time here: ${env.APP_URL}/meeting/${shortId}\n\n- Luca`;
+
+  const emailSubject = meetingTitle;
+
+  // Save as Gmail draft
+  try {
+    await createGmailDraft(
+      tokens,
+      body.participantEmails,
+      emailSubject,
+      emailBody,
+    );
+  } catch (e: unknown) {
+    console.error("Gmail draft error:", e);
+    // Meeting is still created even if draft fails
+  }
+
+  return c.json({
+    status: "created",
+    meetingId: meeting.id,
+    shortId,
+    title: meetingTitle,
+    slotCount: proposeResult.slots.length,
+  });
+});
+
 // ── HTML Rendering ───────────────────────────────────────────────────────────
 
 function renderDashboardPage(
@@ -436,13 +676,16 @@ function renderDashboardPage(
         <div class="page-date">${dateStr}</div>
         <h1>On the Books</h1>
       </div>
-      <select class="filter-select" onchange="filterMeetings(this.value)">
-        <option value="upcoming">Upcoming</option>
-        <option value="all">All</option>
-        <option value="active">Active</option>
-        <option value="confirmed">Confirmed</option>
-        <option value="cancelled">Cancelled</option>
-      </select>
+      <div class="page-header-actions">
+        <button class="btn btn-primary" onclick="openNewMeetingModal()">+ New Meeting</button>
+        <select class="filter-select" onchange="filterMeetings(this.value)">
+          <option value="upcoming">Upcoming</option>
+          <option value="all">All</option>
+          <option value="active">Active</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
     </div>
 
     <div id="meetingsList">
@@ -490,6 +733,56 @@ function renderDashboardPage(
         <button class="modal-close" onclick="closeModal('agendaModal')">&times;</button>
       </div>
       <div class="modal-body" id="agendaModalBody"></div>
+    </div>
+  </div>
+
+  <!-- New Meeting Modal -->
+  <div class="modal modal-wide" id="newMeetingModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">New Meeting</div>
+        <button class="modal-close" onclick="closeModal('newMeetingModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="newMeetingForm" onsubmit="return createMeeting(event)">
+          <div class="form-group">
+            <label class="form-label">Participant email(s)</label>
+            <input type="text" name="participantEmails" class="form-input" placeholder="jane@example.com, bob@example.com" required>
+            <div class="form-hint">Comma-separated for multiple participants</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Meeting type</label>
+            <select name="meetingTypeId" class="form-input" onchange="onMeetingTypeChange(this.value)">
+              <option value="">-- Select type --</option>
+              ${types.map((t) => `<option value="${t.id}">${t.name} (${t.defaultDuration}min)</option>`).join("\n")}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Title <span class="form-hint-inline">(optional, auto-generated if blank)</span></label>
+            <input type="text" name="title" class="form-input" placeholder="Coffee with Jane">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Notes <span class="form-hint-inline">(optional)</span></label>
+            <textarea name="notes" class="form-input form-textarea" rows="2" placeholder="Context for the meeting..."></textarea>
+          </div>
+
+          <div id="newMeetingPreview" class="preview-panel" style="display:none;">
+            <div class="preview-section">
+              <h4 class="preview-section-title">Available Windows</h4>
+              <div id="newMeetingSlots" class="preview-slots-list"></div>
+            </div>
+            <details class="preview-section">
+              <summary class="preview-section-title preview-toggle">Blocking Events</summary>
+              <div id="newMeetingEvents" class="blocking-events-list"></div>
+            </details>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('newMeetingModal')">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="createMeetingBtn">Create Draft</button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 
@@ -789,6 +1082,183 @@ function renderDashboardPage(
         el.innerHTML = '<span class="agenda-none">No agenda items</span>';
       } else {
         el.innerHTML = agenda.map(a => '<div class="agenda-item">' + escapeHtml(a) + '</div>').join('');
+      }
+    }
+
+    // ── New Meeting Modal ──────────────
+
+    function openNewMeetingModal() {
+      document.getElementById('newMeetingForm').reset();
+      document.getElementById('newMeetingPreview').style.display = 'none';
+      document.getElementById('newMeetingModal').classList.add('active');
+    }
+
+    async function onMeetingTypeChange(meetingTypeId) {
+      const preview = document.getElementById('newMeetingPreview');
+      const slotsEl = document.getElementById('newMeetingSlots');
+      const eventsEl = document.getElementById('newMeetingEvents');
+
+      if (!meetingTypeId) {
+        preview.style.display = 'none';
+        return;
+      }
+
+      slotsEl.innerHTML = '<div class="preview-loading">Loading availability...</div>';
+      eventsEl.innerHTML = '';
+      preview.style.display = '';
+
+      await loadPreviewSlots(meetingTypeId, slotsEl, eventsEl);
+    }
+
+    async function loadPreviewSlots(meetingTypeId, slotsEl, eventsEl) {
+      try {
+        const res = await fetch('/dashboard/preview-slots?meetingTypeId=' + meetingTypeId);
+        const data = await res.json();
+        if (data.error) {
+          slotsEl.innerHTML = '<div class="preview-empty">' + escapeHtml(data.error) + '</div>';
+          return;
+        }
+        slotsEl.innerHTML = data.slotsHtml;
+        eventsEl.innerHTML = data.eventsHtml;
+      } catch (e) {
+        slotsEl.innerHTML = '<div class="preview-empty">Failed to load availability.</div>';
+      }
+    }
+
+    async function ignoreEvent(calendarId, eventId, summary, btn) {
+      btn.disabled = true;
+      try {
+        await fetch('/dashboard/events/ignore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calendarId, googleEventId: eventId, summary }),
+        });
+        // Refresh the preview
+        const typeSelect = document.querySelector('#newMeetingForm select[name="meetingTypeId"]');
+        const settingsTypeSelect = document.querySelector('#settingsPreviewTypeId');
+        if (typeSelect && typeSelect.value) {
+          await onMeetingTypeChange(typeSelect.value);
+        }
+        if (settingsTypeSelect && settingsTypeSelect.dataset.active) {
+          await loadSettingsPreview(settingsTypeSelect.dataset.active);
+        }
+        toast('Event ignored');
+      } catch (e) {
+        toast('Failed to ignore event');
+        btn.disabled = false;
+      }
+    }
+
+    async function unignoreEvent(calendarId, eventId, summary, btn) {
+      btn.disabled = true;
+      try {
+        await fetch('/dashboard/events/unignore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calendarId, googleEventId: eventId }),
+        });
+        const typeSelect = document.querySelector('#newMeetingForm select[name="meetingTypeId"]');
+        const settingsTypeSelect = document.querySelector('#settingsPreviewTypeId');
+        if (typeSelect && typeSelect.value) {
+          await onMeetingTypeChange(typeSelect.value);
+        }
+        if (settingsTypeSelect && settingsTypeSelect.dataset.active) {
+          await loadSettingsPreview(settingsTypeSelect.dataset.active);
+        }
+        toast('Event restored');
+      } catch (e) {
+        toast('Failed to restore event');
+        btn.disabled = false;
+      }
+    }
+
+    async function createMeeting(e) {
+      e.preventDefault();
+      const form = document.getElementById('newMeetingForm');
+      const btn = document.getElementById('createMeetingBtn');
+      btn.disabled = true;
+      btn.textContent = 'Creating...';
+
+      const emailsRaw = form.participantEmails.value;
+      const participantEmails = emailsRaw.split(',').map(e => e.trim()).filter(Boolean);
+
+      if (participantEmails.length === 0) {
+        toast('Please enter at least one email');
+        btn.disabled = false;
+        btn.textContent = 'Create Draft';
+        return false;
+      }
+
+      try {
+        const res = await fetch('/dashboard/meetings/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            participantEmails,
+            meetingTypeId: form.meetingTypeId.value || undefined,
+            title: form.title.value || undefined,
+            notes: form.notes.value || undefined,
+          }),
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          toast(data.error);
+          btn.disabled = false;
+          btn.textContent = 'Create Draft';
+          return false;
+        }
+
+        closeModal('newMeetingModal');
+        toast('Meeting created — check your Gmail drafts');
+        // Reload to show new meeting card
+        setTimeout(() => window.location.reload(), 500);
+      } catch (e) {
+        toast('Failed to create meeting');
+        btn.disabled = false;
+        btn.textContent = 'Create Draft';
+      }
+      return false;
+    }
+
+    // ── Settings Preview ────────────────
+
+    async function toggleSettingsPreview(meetingTypeId, btn) {
+      const panel = document.getElementById('settings-preview-' + meetingTypeId);
+      if (panel.style.display === 'none' || !panel.style.display) {
+        btn.textContent = 'Hide preview';
+        panel.style.display = '';
+        panel.innerHTML = '<div class="preview-loading">Loading availability...</div>';
+        const slotsEl = document.createElement('div');
+        slotsEl.id = 'settings-slots-' + meetingTypeId;
+        const eventsEl = document.createElement('div');
+        eventsEl.id = 'settings-events-' + meetingTypeId;
+        panel.innerHTML = '';
+        panel.appendChild(slotsEl);
+        panel.appendChild(eventsEl);
+
+        // Track which type is active for refresh after ignore/unignore
+        let tracker = document.querySelector('#settingsPreviewTypeId');
+        if (!tracker) {
+          tracker = document.createElement('div');
+          tracker.id = 'settingsPreviewTypeId';
+          tracker.style.display = 'none';
+          document.body.appendChild(tracker);
+        }
+        tracker.dataset.active = meetingTypeId;
+
+        await loadPreviewSlots(meetingTypeId, slotsEl, eventsEl);
+      } else {
+        btn.textContent = 'Preview windows';
+        panel.style.display = 'none';
+      }
+    }
+
+    async function loadSettingsPreview(meetingTypeId) {
+      const slotsEl = document.getElementById('settings-slots-' + meetingTypeId);
+      const eventsEl = document.getElementById('settings-events-' + meetingTypeId);
+      if (slotsEl && eventsEl) {
+        await loadPreviewSlots(meetingTypeId, slotsEl, eventsEl);
       }
     }
   </script>

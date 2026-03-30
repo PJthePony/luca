@@ -205,6 +205,28 @@ export const proposedSlots = pgTable(
   (table) => [index("idx_proposed_slots_meeting").on(table.meetingId)],
 );
 
+// ── Ignored Calendar Events ─────────────────────────────────────────────────
+
+export const ignoredCalendarEvents = pgTable(
+  "ignored_calendar_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    calendarId: text("calendar_id").notNull(),
+    googleEventId: text("google_event_id").notNull(),
+    summary: text("summary"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_ignored_events_user_cal_event").on(table.userId, table.calendarId, table.googleEventId),
+    index("idx_ignored_events_user").on(table.userId),
+  ],
+);
+
 // ── Email Threads ────────────────────────────────────────────────────────────
 
 export const emailThreads = pgTable(

@@ -12,7 +12,10 @@ export function getAuthUrl(userId: string): string {
   return oauth2Client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
-    scope: ["https://www.googleapis.com/auth/calendar"],
+    scope: [
+      "https://www.googleapis.com/auth/calendar",
+      "https://www.googleapis.com/auth/gmail.compose",
+    ],
     state: userId,
   });
 }
@@ -232,6 +235,108 @@ export async function createBusyHold(
   });
 
   return response.data.id ?? "";
+}
+
+export interface CalendarEvent {
+  calendarId: string;
+  eventId: string;
+  summary: string;
+  start: Date;
+  end: Date;
+}
+
+/**
+ * List events from a specific calendar within a time range.
+ * Returns actual event details (not just busy/free) so we can show
+ * what's blocking availability.
+ */
+export async function listEvents(
+  tokens: GoogleTokens,
+  calendarId: string,
+  timeMin: Date,
+  timeMax: Date,
+): Promise<CalendarEvent[]> {
+  const calendar = getCalendarClient(tokens);
+
+  const events: CalendarEvent[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const response = await calendar.events.list({
+      calendarId,
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 250,
+      pageToken,
+    });
+
+    for (const item of response.data.items ?? []) {
+      // Skip all-day events and cancelled events
+      if (!item.start?.dateTime || !item.end?.dateTime) continue;
+      if (item.status === "cancelled") continue;
+      // Skip transparent (free) events
+      if (item.transparency === "transparent") continue;
+
+      events.push({
+        calendarId,
+        eventId: item.id ?? "",
+        summary: item.summary ?? "(No title)",
+        start: new Date(item.start.dateTime),
+        end: new Date(item.end.dateTime),
+      });
+    }
+
+    pageToken = response.data.nextPageToken ?? undefined;
+  } while (pageToken);
+
+  return events;
+}
+
+function getGmailClient(tokens: GoogleTokens) {
+  const client = new google.auth.OAuth2(
+    env.GOOGLE_CLIENT_ID,
+    env.GOOGLE_CLIENT_SECRET,
+    env.GOOGLE_REDIRECT_URI,
+  );
+  client.setCredentials(tokens);
+  return google.gmail({ version: "v1", auth: client });
+}
+
+/**
+ * Create a Gmail draft. Returns the draft ID.
+ */
+export async function createGmailDraft(
+  tokens: GoogleTokens,
+  to: string[],
+  subject: string,
+  body: string,
+  bcc?: string[],
+): Promise<{ draftId: string }> {
+  const gmail = getGmailClient(tokens);
+
+  const headers = [
+    `To: ${to.join(", ")}`,
+    `Subject: ${subject}`,
+    "Content-Type: text/plain; charset=utf-8",
+  ];
+  if (bcc && bcc.length > 0) {
+    headers.push(`Bcc: ${bcc.join(", ")}`);
+  }
+
+  const raw = Buffer.from(
+    headers.join("\r\n") + "\r\n\r\n" + body,
+  ).toString("base64url");
+
+  const response = await gmail.users.drafts.create({
+    userId: "me",
+    requestBody: {
+      message: { raw },
+    },
+  });
+
+  return { draftId: response.data.id ?? "" };
 }
 
 export async function deleteEvent(

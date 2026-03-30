@@ -1,13 +1,23 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { users, participants, availabilityRules, userCalendars, meetingTypes } from "../db/schema.js";
+import { users, participants, availabilityRules, userCalendars, meetingTypes, ignoredCalendarEvents } from "../db/schema.js";
 import * as gcal from "../lib/google.js";
+import type { CalendarEvent } from "../lib/google.js";
 import type { TimePreference, GoogleTokens } from "../types/index.js";
 
-interface ProposedSlot {
+export interface ProposedSlot {
   start: Date;
   end: Date;
   score: number;
+}
+
+export interface BlockingEvent {
+  calendarId: string;
+  eventId: string;
+  summary: string;
+  start: Date;
+  end: Date;
+  isIgnored: boolean;
 }
 
 /**
@@ -81,26 +91,36 @@ export async function findAvailableSlots(
     }
   }
 
-  // Query free/busy for the search window
+  // Query events for the search window
   const now = new Date();
   const searchEnd = new Date(
     now.getTime() + searchDays * 24 * 60 * 60 * 1000,
   );
 
-  const freeBusyResults = await gcal.queryFreeBusy(
-    organizer.googleTokens as GoogleTokens,
-    calendarIds,
-    now,
-    searchEnd,
+  // Fetch actual events from all calendars so we can filter out ignored ones
+  const allEvents: CalendarEvent[] = [];
+  for (const calId of calendarIds) {
+    const events = await gcal.listEvents(
+      organizer.googleTokens as GoogleTokens,
+      calId,
+      now,
+      searchEnd,
+    );
+    allEvents.push(...events);
+  }
+
+  // Look up which events the organizer has chosen to ignore
+  const ignoredEvents = await db.query.ignoredCalendarEvents.findMany({
+    where: eq(ignoredCalendarEvents.userId, organizerId),
+  });
+  const ignoredKeys = new Set(
+    ignoredEvents.map((e) => `${e.calendarId}:${e.googleEventId}`),
   );
 
-  // Merge all busy periods
-  const allBusy = freeBusyResults.flatMap((r) =>
-    r.busy.map((b) => ({
-      start: new Date(b.start),
-      end: new Date(b.end),
-    })),
-  );
+  // Build busy list excluding ignored events
+  const allBusy = allEvents
+    .filter((e) => !ignoredKeys.has(`${e.calendarId}:${e.eventId}`))
+    .map((e) => ({ start: e.start, end: e.end }));
 
   // Look up meeting type time constraints (e.g. coffee = 7:00–11:00)
   let typeTimeWindow: { earliest: string; latest: string } | undefined;
@@ -142,6 +162,108 @@ export async function findAvailableSlots(
   // Apply diversity pass: spread across different days, enforce 2-hour gaps
   const diverse = applyDiversityPass(filtered, tz);
   return diverse.slice(0, 3);
+}
+
+/**
+ * Preview available time slots for a meeting type without requiring
+ * an existing meeting or participants. Only checks the organizer's
+ * own calendars. Returns top 5 slots + the blocking events so the
+ * UI can show why certain times are unavailable and let the user
+ * override specific events.
+ */
+export async function previewAvailableSlots(
+  organizerId: string,
+  durationMin: number,
+  searchDays: number = 10,
+  meetingTypeId?: string | null,
+): Promise<{ slots: ProposedSlot[]; blockingEvents: BlockingEvent[] }> {
+  const organizer = await db.query.users.findFirst({
+    where: eq(users.id, organizerId),
+  });
+  if (!organizer?.googleTokens) {
+    throw new Error("No Google Calendar connected");
+  }
+
+  const tz = organizer.timezone || "America/New_York";
+
+  const rules = await db.query.availabilityRules.findMany({
+    where: eq(availabilityRules.userId, organizerId),
+  });
+
+  // Get organizer's calendars
+  const orgCalendars = await db.query.userCalendars.findMany({
+    where: eq(userCalendars.userId, organizerId),
+  });
+  const calendarIds = orgCalendars.length > 0
+    ? orgCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId)
+    : [organizer.email];
+
+  const now = new Date();
+  const searchEnd = new Date(now.getTime() + searchDays * 24 * 60 * 60 * 1000);
+
+  // Fetch actual events from all calendars
+  const allEvents: CalendarEvent[] = [];
+  for (const calId of calendarIds) {
+    const events = await gcal.listEvents(
+      organizer.googleTokens as GoogleTokens,
+      calId,
+      now,
+      searchEnd,
+    );
+    allEvents.push(...events);
+  }
+
+  // Look up which events are ignored
+  const ignoredRecords = await db.query.ignoredCalendarEvents.findMany({
+    where: eq(ignoredCalendarEvents.userId, organizerId),
+  });
+  const ignoredKeys = new Set(
+    ignoredRecords.map((e) => `${e.calendarId}:${e.googleEventId}`),
+  );
+
+  // Build blocking events list with ignored status
+  const blockingEvents: BlockingEvent[] = allEvents.map((e) => ({
+    calendarId: e.calendarId,
+    eventId: e.eventId,
+    summary: e.summary,
+    start: e.start,
+    end: e.end,
+    isIgnored: ignoredKeys.has(`${e.calendarId}:${e.eventId}`),
+  }));
+
+  // Build busy list excluding ignored events
+  const allBusy = allEvents
+    .filter((e) => !ignoredKeys.has(`${e.calendarId}:${e.eventId}`))
+    .map((e) => ({ start: e.start, end: e.end }));
+
+  // Look up meeting type time constraints
+  let typeTimeWindow: { earliest: string; latest: string } | undefined;
+  if (meetingTypeId) {
+    const mType = await db.query.meetingTypes.findFirst({
+      where: eq(meetingTypes.id, meetingTypeId),
+    });
+    if (mType?.earliestTime || mType?.latestTime) {
+      typeTimeWindow = {
+        earliest: mType.earliestTime ?? "00:00",
+        latest: mType.latestTime ?? "23:59",
+      };
+    }
+  }
+
+  const candidates = generateCandidateSlots(now, searchEnd, durationMin, allBusy, rules, tz, typeTimeWindow);
+
+  const scored = candidates.map((slot) => ({
+    ...slot,
+    score: scoreSlot(slot, rules, [], now, tz),
+  }));
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const diverse = applyDiversityPass(scored, tz);
+  return {
+    slots: diverse.slice(0, 5),
+    blockingEvents: blockingEvents.sort((a, b) => a.start.getTime() - b.start.getTime()),
+  };
 }
 
 /** Generate candidate slots that don't conflict with busy periods. */
