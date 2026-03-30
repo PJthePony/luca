@@ -417,6 +417,17 @@ export const settingsStyles = `
     .location-row > div .text-muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
 
+  /* Allowed days */
+  .days-checkbox-row { display: flex; gap: 0.375rem; flex-wrap: wrap; margin-top: 0.375rem; }
+  .day-check {
+    display: flex; align-items: center; gap: 0.25rem;
+    padding: 0.25rem 0.5rem; border: 1px solid var(--nxb-color-border);
+    border-radius: var(--nxb-radius-md); font-size: 0.8rem; cursor: pointer;
+    user-select: none; transition: background var(--nxb-transition-fast);
+  }
+  .day-check:has(input:checked) { background: #eff6ff; border-color: #bfdbfe; }
+  .day-check input { margin: 0; }
+
   /* Preview windows */
   .preview-windows-section { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--nxb-color-border); }
   .preview-panel { margin-top: 0.75rem; }

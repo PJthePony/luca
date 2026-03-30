@@ -131,6 +131,7 @@ settingsRoutes.post("/meeting-types", async (c) => {
     defaultLocation?: string;
     earliestTime?: string;
     latestTime?: string;
+    allowedDays?: number[];
     isDefault?: boolean;
     addGoogleMeet?: boolean;
     collectPhoneNumber?: boolean;
@@ -154,6 +155,7 @@ settingsRoutes.post("/meeting-types", async (c) => {
         defaultLocation: body.defaultLocation ?? null,
         earliestTime: body.earliestTime ?? null,
         latestTime: body.latestTime ?? null,
+        allowedDays: body.allowedDays && body.allowedDays.length > 0 ? body.allowedDays : null,
         isDefault: body.isDefault ?? false,
         addGoogleMeet: body.addGoogleMeet ?? false,
         collectPhoneNumber: body.collectPhoneNumber ?? false,
@@ -180,6 +182,7 @@ settingsRoutes.post("/meeting-types", async (c) => {
       defaultLocation: body.defaultLocation ?? null,
       earliestTime: body.earliestTime ?? null,
       latestTime: body.latestTime ?? null,
+      allowedDays: body.allowedDays && body.allowedDays.length > 0 ? body.allowedDays : null,
       isDefault: body.isDefault ?? false,
       addGoogleMeet: body.addGoogleMeet ?? false,
       collectPhoneNumber: body.collectPhoneNumber ?? false,
@@ -414,6 +417,10 @@ export function to12h(time: string | null | undefined): string {
   return `${h}:${m.slice(0, 2)} ${ampm}`;
 }
 
+function shortDayName(day: number): string {
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day] ?? "";
+}
+
 const COMMON_TIMEZONES = [
   "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
   "America/Anchorage", "Pacific/Honolulu", "America/Phoenix",
@@ -483,11 +490,11 @@ export function renderSettingsBody(
               ${t.collectPhoneNumber ? '<span class="badge">Phone #</span>' : ""}
             </div>
             <div class="card-actions">
-              <button class="btn-secondary btn-sm" onclick="showEditType('${t.id}', '${t.name.replace(/'/g, "\\'")}', ${t.defaultDuration}, ${t.isOnline}, '${(t.defaultLocation ?? "").replace(/'/g, "\\'")}', ${t.isDefault}, '${t.earliestTime?.slice(0, 5) ?? ""}', '${t.latestTime?.slice(0, 5) ?? ""}', ${t.addGoogleMeet}, ${t.collectPhoneNumber})">Edit</button>
+              <button class="btn-secondary btn-sm" onclick="showEditType('${t.id}', '${t.name.replace(/'/g, "\\'")}', ${t.defaultDuration}, ${t.isOnline}, '${(t.defaultLocation ?? "").replace(/'/g, "\\'")}', ${t.isDefault}, '${t.earliestTime?.slice(0, 5) ?? ""}', '${t.latestTime?.slice(0, 5) ?? ""}', ${t.addGoogleMeet}, ${t.collectPhoneNumber}, ${JSON.stringify(t.allowedDays ?? [])})">Edit</button>
               <button class="btn-danger btn-sm" onclick="deleteType('${t.id}')">Delete</button>
             </div>
           </div>
-          <div class="text-sm text-muted">${t.defaultDuration} min${t.earliestTime || t.latestTime ? ` · ${to12h(t.earliestTime)} – ${to12h(t.latestTime)}` : ""}${t.defaultLocation ? ` · ${t.defaultLocation}` : ""}</div>
+          <div class="text-sm text-muted">${t.defaultDuration} min${t.earliestTime || t.latestTime ? ` · ${to12h(t.earliestTime)} – ${to12h(t.latestTime)}` : ""}${t.allowedDays && t.allowedDays.length > 0 ? ` · ${t.allowedDays.map((d) => shortDayName(d)).join(", ")}` : ""}${t.defaultLocation ? ` · ${t.defaultLocation}` : ""}</div>
         </div>
         ${
           !t.isOnline
@@ -651,6 +658,18 @@ export function renderSettingsBody(
           </div>
         </div>
         <p class="text-sm text-muted" style="margin-bottom: 0.75rem;">Restrict when Luca proposes this type of meeting. Leave blank for no restriction.</p>
+        <div class="form-group">
+          <label>Allowed Days <span style="font-weight:400;color:var(--nxb-color-text-muted)">(optional — leave unchecked for any day)</span></label>
+          <div class="days-checkbox-row">
+            <label class="day-check"><input type="checkbox" id="typeDay0"><span>Sun</span></label>
+            <label class="day-check"><input type="checkbox" id="typeDay1"><span>Mon</span></label>
+            <label class="day-check"><input type="checkbox" id="typeDay2"><span>Tue</span></label>
+            <label class="day-check"><input type="checkbox" id="typeDay3"><span>Wed</span></label>
+            <label class="day-check"><input type="checkbox" id="typeDay4"><span>Thu</span></label>
+            <label class="day-check"><input type="checkbox" id="typeDay5"><span>Fri</span></label>
+            <label class="day-check"><input type="checkbox" id="typeDay6"><span>Sat</span></label>
+          </div>
+        </div>
         <div class="checkbox-group">
           <label><input type="checkbox" id="typeDefault"> Set as default</label>
           <label><input type="checkbox" id="typeGoogleMeet"> Add Google Meet link</label>
@@ -933,10 +952,14 @@ export function renderSettingsBody(
       document.getElementById('typeDefault').checked = false;
       document.getElementById('typeGoogleMeet').checked = false;
       document.getElementById('typeCollectPhone').checked = false;
+      for (let i = 0; i < 7; i++) {
+        const cb = document.getElementById('typeDay' + i);
+        if (cb) cb.checked = false;
+      }
       document.getElementById('typeModal').classList.add('active');
     }
 
-    function showEditType(id, name, duration, isOnline, location, isDefault, earliest, latest, addGoogleMeet, collectPhoneNumber) {
+    function showEditType(id, name, duration, isOnline, location, isDefault, earliest, latest, addGoogleMeet, collectPhoneNumber, allowedDays) {
       document.getElementById('typeModalTitle').textContent = 'Edit Meeting Type';
       document.getElementById('typeId').value = id;
       document.getElementById('typeName').value = name;
@@ -948,12 +971,23 @@ export function renderSettingsBody(
       document.getElementById('typeDefault').checked = isDefault;
       document.getElementById('typeGoogleMeet').checked = addGoogleMeet || false;
       document.getElementById('typeCollectPhone').checked = collectPhoneNumber || false;
+      // Set allowed days checkboxes
+      const days = allowedDays || [];
+      for (let i = 0; i < 7; i++) {
+        const cb = document.getElementById('typeDay' + i);
+        if (cb) cb.checked = days.includes(i);
+      }
       document.getElementById('typeModal').classList.add('active');
     }
 
     async function saveType() {
       const earliestVal = document.getElementById('typeEarliest').value;
       const latestVal = document.getElementById('typeLatest').value;
+      const allowedDays = [];
+      for (let i = 0; i < 7; i++) {
+        const cb = document.getElementById('typeDay' + i);
+        if (cb && cb.checked) allowedDays.push(i);
+      }
       const payload = {
         id: document.getElementById('typeId').value || undefined,
         name: document.getElementById('typeName').value,
@@ -962,6 +996,7 @@ export function renderSettingsBody(
         defaultLocation: document.getElementById('typeLocation').value || undefined,
         earliestTime: earliestVal ? earliestVal + ':00' : undefined,
         latestTime: latestVal ? latestVal + ':00' : undefined,
+        allowedDays: allowedDays.length > 0 && allowedDays.length < 7 ? allowedDays : undefined,
         isDefault: document.getElementById('typeDefault').checked,
         addGoogleMeet: document.getElementById('typeGoogleMeet').checked,
         collectPhoneNumber: document.getElementById('typeCollectPhone').checked,

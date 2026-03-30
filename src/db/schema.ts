@@ -89,6 +89,7 @@ export const meetingTypes = pgTable(
     defaultLocation: text("default_location"),
     earliestTime: time("earliest_time"), // e.g. "07:00" — null means no constraint
     latestTime: time("latest_time"), // e.g. "11:00" — null means no constraint
+    allowedDays: smallint("allowed_days").array(), // e.g. [3,4,5] for Wed/Thu/Fri — null means all days
     addGoogleMeet: boolean("add_google_meet").notNull().default(false),
     collectPhoneNumber: boolean("collect_phone_number").notNull().default(false),
     isDefault: boolean("is_default").notNull().default(false), // default meeting type for this user

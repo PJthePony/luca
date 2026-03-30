@@ -122,8 +122,9 @@ export async function findAvailableSlots(
     .filter((e) => !ignoredKeys.has(`${e.calendarId}:${e.eventId}`))
     .map((e) => ({ start: e.start, end: e.end }));
 
-  // Look up meeting type time constraints (e.g. coffee = 7:00–11:00)
+  // Look up meeting type constraints (time window + allowed days)
   let typeTimeWindow: { earliest: string; latest: string } | undefined;
+  let typeAllowedDays: number[] | undefined;
   if (meetingTypeId) {
     const mType = await db.query.meetingTypes.findFirst({
       where: eq(meetingTypes.id, meetingTypeId),
@@ -133,6 +134,9 @@ export async function findAvailableSlots(
         earliest: mType.earliestTime ?? "00:00",
         latest: mType.latestTime ?? "23:59",
       };
+    }
+    if (mType?.allowedDays && mType.allowedDays.length > 0) {
+      typeAllowedDays = mType.allowedDays;
     }
   }
 
@@ -145,6 +149,7 @@ export async function findAvailableSlots(
     rules,
     tz,
     typeTimeWindow,
+    typeAllowedDays,
   );
 
   // Score candidates
@@ -236,8 +241,9 @@ export async function previewAvailableSlots(
     .filter((e) => !ignoredKeys.has(`${e.calendarId}:${e.eventId}`))
     .map((e) => ({ start: e.start, end: e.end }));
 
-  // Look up meeting type time constraints
+  // Look up meeting type constraints
   let typeTimeWindow: { earliest: string; latest: string } | undefined;
+  let typeAllowedDays: number[] | undefined;
   if (meetingTypeId) {
     const mType = await db.query.meetingTypes.findFirst({
       where: eq(meetingTypes.id, meetingTypeId),
@@ -248,9 +254,12 @@ export async function previewAvailableSlots(
         latest: mType.latestTime ?? "23:59",
       };
     }
+    if (mType?.allowedDays && mType.allowedDays.length > 0) {
+      typeAllowedDays = mType.allowedDays;
+    }
   }
 
-  const candidates = generateCandidateSlots(now, searchEnd, durationMin, allBusy, rules, tz, typeTimeWindow);
+  const candidates = generateCandidateSlots(now, searchEnd, durationMin, allBusy, rules, tz, typeTimeWindow, typeAllowedDays);
 
   const scored = candidates.map((slot) => ({
     ...slot,
@@ -275,6 +284,7 @@ function generateCandidateSlots(
   rules: (typeof availabilityRules.$inferSelect)[],
   tz: string,
   typeTimeWindow?: { earliest: string; latest: string },
+  typeAllowedDays?: number[],
 ): { start: Date; end: Date }[] {
   const slots: { start: Date; end: Date }[] = [];
   const durationMs = durationMin * 60 * 1000;
@@ -294,6 +304,11 @@ function generateCandidateSlots(
     if (dayStartUtc > searchEnd) break;
 
     const dayOfWeek = localDate.getDay();
+
+    // Skip days not allowed by meeting type (e.g. dinner only Wed/Thu/Fri)
+    if (typeAllowedDays && !typeAllowedDays.includes(dayOfWeek)) {
+      continue;
+    }
 
     // Find applicable availability rules for this day
     const dayRules = rules.filter(
