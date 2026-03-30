@@ -273,18 +273,32 @@ export async function listEvents(
     });
 
     for (const item of response.data.items ?? []) {
-      // Skip all-day events and cancelled events
-      if (!item.start?.dateTime || !item.end?.dateTime) continue;
       if (item.status === "cancelled") continue;
       // Skip transparent (free) events
       if (item.transparency === "transparent") continue;
+
+      let start: Date;
+      let end: Date;
+
+      if (item.start?.dateTime && item.end?.dateTime) {
+        // Timed event
+        start = new Date(item.start.dateTime);
+        end = new Date(item.end.dateTime);
+      } else if (item.start?.date && item.end?.date) {
+        // All-day event — dates are YYYY-MM-DD, end date is exclusive
+        // Convert to full-day UTC range (midnight to midnight)
+        start = new Date(item.start.date + "T00:00:00Z");
+        end = new Date(item.end.date + "T00:00:00Z");
+      } else {
+        continue;
+      }
 
       events.push({
         calendarId,
         eventId: item.id ?? "",
         summary: item.summary ?? "(No title)",
-        start: new Date(item.start.dateTime),
-        end: new Date(item.end.dateTime),
+        start,
+        end,
       });
     }
 
