@@ -179,7 +179,6 @@ export async function findAvailableSlots(
 export async function previewAvailableSlots(
   organizerId: string,
   durationMin: number,
-  searchDays: number = 10,
   meetingTypeId?: string | null,
 ): Promise<{ slots: ProposedSlot[]; blockingEvents: BlockingEvent[] }> {
   const organizer = await db.query.users.findFirst({
@@ -203,45 +202,7 @@ export async function previewAvailableSlots(
     ? orgCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId)
     : [organizer.email];
 
-  const now = new Date();
-  const searchEnd = new Date(now.getTime() + searchDays * 24 * 60 * 60 * 1000);
-
-  // Fetch actual events from all calendars
-  const allEvents: CalendarEvent[] = [];
-  for (const calId of calendarIds) {
-    const events = await gcal.listEvents(
-      organizer.googleTokens as GoogleTokens,
-      calId,
-      now,
-      searchEnd,
-    );
-    allEvents.push(...events);
-  }
-
-  // Look up which events are ignored
-  const ignoredRecords = await db.query.ignoredCalendarEvents.findMany({
-    where: eq(ignoredCalendarEvents.userId, organizerId),
-  });
-  const ignoredKeys = new Set(
-    ignoredRecords.map((e) => `${e.calendarId}:${e.googleEventId}`),
-  );
-
-  // Build blocking events list with ignored status
-  const blockingEvents: BlockingEvent[] = allEvents.map((e) => ({
-    calendarId: e.calendarId,
-    eventId: e.eventId,
-    summary: e.summary,
-    start: e.start,
-    end: e.end,
-    isIgnored: ignoredKeys.has(`${e.calendarId}:${e.eventId}`),
-  }));
-
-  // Build busy list excluding ignored events
-  const allBusy = allEvents
-    .filter((e) => !ignoredKeys.has(`${e.calendarId}:${e.eventId}`))
-    .map((e) => ({ start: e.start, end: e.end }));
-
-  // Look up meeting type constraints
+  // Look up meeting type constraints once
   let typeTimeWindow: { earliest: string; latest: string } | undefined;
   let typeAllowedDays: number[] | undefined;
   if (meetingTypeId) {
@@ -259,19 +220,83 @@ export async function previewAvailableSlots(
     }
   }
 
-  const candidates = generateCandidateSlots(now, searchEnd, durationMin, allBusy, rules, tz, typeTimeWindow, typeAllowedDays);
+  // Look up which events are ignored
+  const ignoredRecords = await db.query.ignoredCalendarEvents.findMany({
+    where: eq(ignoredCalendarEvents.userId, organizerId),
+  });
+  const ignoredKeys = new Set(
+    ignoredRecords.map((e) => `${e.calendarId}:${e.googleEventId}`),
+  );
 
-  const scored = candidates.map((slot) => ({
-    ...slot,
-    score: scoreSlot(slot, rules, [], now, tz),
-  }));
+  // Search in expanding windows until we find 3 slots (max 90 days)
+  const TARGET_SLOTS = 3;
+  const MAX_DAYS = 90;
+  const CHUNK_DAYS = 14;
+  const now = new Date();
+  let allSlots: ProposedSlot[] = [];
+  const allBlockingEvents: BlockingEvent[] = [];
 
-  scored.sort((a, b) => b.score - a.score);
+  for (let offset = 0; offset < MAX_DAYS && allSlots.length < TARGET_SLOTS; offset += CHUNK_DAYS) {
+    const chunkStart = new Date(now.getTime() + offset * 24 * 60 * 60 * 1000);
+    const chunkEnd = new Date(now.getTime() + Math.min(offset + CHUNK_DAYS, MAX_DAYS) * 24 * 60 * 60 * 1000);
 
-  const diverse = applyDiversityPass(scored, tz);
+    // Fetch events for this chunk
+    const chunkEvents: CalendarEvent[] = [];
+    for (const calId of calendarIds) {
+      const events = await gcal.listEvents(
+        organizer.googleTokens as GoogleTokens,
+        calId,
+        chunkStart,
+        chunkEnd,
+      );
+      chunkEvents.push(...events);
+    }
+
+    // Collect blocking events
+    for (const e of chunkEvents) {
+      allBlockingEvents.push({
+        calendarId: e.calendarId,
+        eventId: e.eventId,
+        summary: e.summary,
+        start: e.start,
+        end: e.end,
+        isIgnored: ignoredKeys.has(`${e.calendarId}:${e.eventId}`),
+      });
+    }
+
+    // Build busy list excluding ignored events
+    const chunkBusy = chunkEvents
+      .filter((e) => !ignoredKeys.has(`${e.calendarId}:${e.eventId}`))
+      .map((e) => ({ start: e.start, end: e.end }));
+
+    const candidates = generateCandidateSlots(chunkStart, chunkEnd, durationMin, chunkBusy, rules, tz, typeTimeWindow, typeAllowedDays);
+
+    const scored = candidates.map((slot) => ({
+      ...slot,
+      score: scoreSlot(slot, rules, [], now, tz),
+    }));
+
+    scored.sort((a, b) => b.score - a.score);
+    allSlots.push(...scored);
+
+    // Check if we have enough after diversity pass
+    if (allSlots.length >= TARGET_SLOTS) {
+      allSlots.sort((a, b) => b.score - a.score);
+      const diverse = applyDiversityPass(allSlots, tz);
+      if (diverse.length >= TARGET_SLOTS) {
+        allSlots = diverse;
+        break;
+      }
+    }
+  }
+
+  // Final diversity pass if we exited the loop
+  allSlots.sort((a, b) => b.score - a.score);
+  const finalSlots = applyDiversityPass(allSlots, tz).slice(0, TARGET_SLOTS);
+
   return {
-    slots: diverse.slice(0, 5),
-    blockingEvents: blockingEvents.sort((a, b) => a.start.getTime() - b.start.getTime()),
+    slots: finalSlots,
+    blockingEvents: allBlockingEvents.sort((a, b) => a.start.getTime() - b.start.getTime()),
   };
 }
 

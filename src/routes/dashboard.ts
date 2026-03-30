@@ -401,7 +401,6 @@ dashboardRoutes.get("/preview-slots", async (c) => {
     const { slots, blockingEvents } = await previewAvailableSlots(
       user.id,
       durationMin,
-      10,
       meetingTypeId,
     );
 
