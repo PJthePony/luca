@@ -417,6 +417,51 @@ export const settingsStyles = `
     .location-row > div .text-muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
 
+  /* Weekly calendar */
+  .week-calendar { margin-bottom: 1.25rem; }
+  .week-nav {
+    display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;
+  }
+  .week-nav-label { font-weight: 600; font-size: 0.9rem; min-width: 160px; text-align: center; }
+  .week-today-btn { margin-left: auto; }
+  .week-grid {
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.375rem;
+    min-height: 120px;
+  }
+  .week-loading { grid-column: 1 / -1; text-align: center; padding: 2rem; color: var(--nxb-color-text-muted); font-size: 0.85rem; }
+  .week-day-col {
+    background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border);
+    border-radius: var(--nxb-radius-md); overflow: hidden; min-height: 100px;
+  }
+  .week-day-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 0.375rem 0.5rem; background: var(--nxb-color-bg);
+    border-bottom: 1px solid var(--nxb-color-border);
+    font-size: 0.75rem;
+  }
+  .week-day-name { font-weight: 600; }
+  .week-day-date { color: var(--nxb-color-text-muted); }
+  .week-day-events { padding: 0.25rem; display: flex; flex-direction: column; gap: 0.25rem; }
+  .week-event {
+    padding: 0.3rem 0.4rem; border-radius: var(--nxb-radius-sm);
+    background: #eff6ff; border-left: 3px solid #3b82f6;
+    cursor: pointer; transition: opacity var(--nxb-transition-fast);
+    font-size: 0.75rem;
+  }
+  .week-event:hover { opacity: 0.8; }
+  .week-event.ignored {
+    opacity: 0.4; text-decoration: line-through;
+    background: var(--nxb-color-bg); border-left-color: var(--nxb-color-border);
+  }
+  .week-event-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .week-event-time { color: var(--nxb-color-text-muted); font-size: 0.7rem; }
+  .week-event-none { font-size: 0.7rem; color: var(--nxb-color-text-muted); padding: 0.25rem; text-align: center; }
+
+  @media (max-width: 768px) {
+    .week-grid { grid-template-columns: repeat(2, 1fr); }
+    .week-day-col:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  }
+
   /* Allowed days */
   .days-checkbox-row { display: flex; gap: 0.375rem; flex-wrap: wrap; margin-top: 0.375rem; }
   .day-check {

@@ -609,6 +609,21 @@ export function renderSettingsBody(
 
     <!-- Availability Section -->
     <h2>Availability</h2>
+
+    <!-- Weekly Calendar for blocking events -->
+    <div class="week-calendar" id="weekCalendar">
+      <div class="week-nav">
+        <button class="btn btn-secondary btn-sm" onclick="navWeek(-1)">&#9664;</button>
+        <span class="week-nav-label" id="weekLabel">Loading...</span>
+        <button class="btn btn-secondary btn-sm" onclick="navWeek(1)">&#9654;</button>
+        <button class="btn-secondary btn-sm week-today-btn" onclick="navWeek(0)">Today</button>
+      </div>
+      <div class="week-grid" id="weekGrid">
+        <div class="week-loading">Loading calendar...</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; font-size: 0.95rem;">Standing Hours</h3>
     ${availabilityRows}
 
     <!-- Meeting Types Section -->
@@ -1060,7 +1075,7 @@ export function renderSettingsBody(
     }
 
     // ── Google Places Autocomplete ──
-    // ── Availability Preview ──────────────────
+    // ── Availability Preview (slots only) ──────
 
     async function toggleSettingsPreview(meetingTypeId, btn) {
       const panel = document.getElementById('settings-preview-' + meetingTypeId);
@@ -1076,9 +1091,7 @@ export function renderSettingsBody(
             panel.innerHTML = '<div class="preview-empty">' + (data.error) + '</div>';
             return;
           }
-          panel.innerHTML =
-            '<div class="preview-section"><h4 class="preview-section-title">Available Windows</h4><div class="preview-slots-list">' + data.slotsHtml + '</div></div>' +
-            '<details class="preview-section"><summary class="preview-section-title preview-toggle">Blocking Events</summary><div class="blocking-events-list">' + data.eventsHtml + '</div></details>';
+          panel.innerHTML = '<div class="preview-section"><h4 class="preview-section-title">Available Windows</h4><div class="preview-slots-list">' + data.slotsHtml + '</div></div>';
         } catch (e) {
           panel.innerHTML = '<div class="preview-empty">Failed to load availability.</div>';
         }
@@ -1088,54 +1101,89 @@ export function renderSettingsBody(
       }
     }
 
-    async function ignoreEvent(calendarId, eventId, summary, btn) {
-      btn.disabled = true;
+    function refreshOpenPreviews() {
+      document.querySelectorAll('[id^="preview-btn-"]').forEach(b => {
+        if (b.textContent === 'Hide preview') {
+          const typeId = b.id.replace('preview-btn-', '');
+          b.textContent = 'Preview windows';
+          const p = document.getElementById('settings-preview-' + typeId);
+          if (p) p.style.display = 'none';
+          toggleSettingsPreview(typeId, b);
+        }
+      });
+    }
+
+    // ── Weekly Calendar ──────────────────────
+
+    let currentWeekStart = null;
+
+    async function loadWeekCalendar(weekStart) {
+      const grid = document.getElementById('weekGrid');
+      const label = document.getElementById('weekLabel');
+      if (!grid) return;
+      grid.innerHTML = '<div class="week-loading">Loading calendar...</div>';
+
       try {
-        await fetch('/dashboard/events/ignore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ calendarId: calendarId, googleEventId: eventId, summary: summary }),
-        });
-        // Re-expand any open previews
-        document.querySelectorAll('[id^="preview-btn-"]').forEach(b => {
-          if (b.textContent === 'Hide preview') {
-            const typeId = b.id.replace('preview-btn-', '');
-            b.textContent = 'Preview windows';
-            const p = document.getElementById('settings-preview-' + typeId);
-            if (p) p.style.display = 'none';
-            toggleSettingsPreview(typeId, b);
-          }
-        });
-        toast('Event ignored');
+        const url = weekStart
+          ? '/dashboard/calendar-events?weekStart=' + weekStart
+          : '/dashboard/calendar-events';
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.error) {
+          grid.innerHTML = '<div class="week-loading">' + data.error + '</div>';
+          return;
+        }
+        grid.innerHTML = data.html;
+        if (label) label.textContent = data.weekLabel;
+        currentWeekStart = data.weekStart;
       } catch (e) {
-        toast('Failed to ignore event');
-        btn.disabled = false;
+        grid.innerHTML = '<div class="week-loading">Failed to load calendar.</div>';
       }
     }
 
-    async function unignoreEvent(calendarId, eventId, summary, btn) {
-      btn.disabled = true;
+    function navWeek(direction) {
+      if (direction === 0) {
+        loadWeekCalendar(null);
+        return;
+      }
+      if (!currentWeekStart) return;
+      const d = new Date(currentWeekStart + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + direction * 7);
+      const iso = d.toISOString().slice(0, 10);
+      loadWeekCalendar(iso);
+    }
+
+    async function toggleCalEvent(calendarId, eventId, summary, isIgnored, el) {
+      el.style.pointerEvents = 'none';
+      el.style.opacity = '0.5';
       try {
-        await fetch('/dashboard/events/unignore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ calendarId: calendarId, googleEventId: eventId }),
-        });
-        document.querySelectorAll('[id^="preview-btn-"]').forEach(b => {
-          if (b.textContent === 'Hide preview') {
-            const typeId = b.id.replace('preview-btn-', '');
-            b.textContent = 'Preview windows';
-            const p = document.getElementById('settings-preview-' + typeId);
-            if (p) p.style.display = 'none';
-            toggleSettingsPreview(typeId, b);
-          }
-        });
-        toast('Event restored');
+        if (isIgnored) {
+          await fetch('/dashboard/events/unignore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ calendarId, googleEventId: eventId }),
+          });
+          toast('Event restored');
+        } else {
+          await fetch('/dashboard/events/ignore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ calendarId, googleEventId: eventId, summary }),
+          });
+          toast('Event ignored');
+        }
+        // Refresh calendar and any open previews
+        loadWeekCalendar(currentWeekStart);
+        refreshOpenPreviews();
       } catch (e) {
-        toast('Failed to restore event');
-        btn.disabled = false;
+        toast('Failed to update event');
+        el.style.pointerEvents = '';
+        el.style.opacity = '';
       }
     }
+
+    // Auto-load calendar when settings open
+    loadWeekCalendar(null);
 
     ${googleMapsApiKey ? `
     let placesAutocomplete = null;

@@ -437,6 +437,112 @@ dashboardRoutes.get("/preview-slots", async (c) => {
   }
 });
 
+// ── API: Weekly Calendar Events ──────────────────────────────────────────────
+
+dashboardRoutes.get("/calendar-events", async (c) => {
+  const user = c.get("user");
+  const tz = user.timezone || "America/New_York";
+  const weekStartParam = c.req.query("weekStart");
+
+  const tokens = user.googleTokens as GoogleTokens;
+  if (!tokens) {
+    return c.json({ error: "Calendar not connected" }, 400);
+  }
+
+  // Parse week start (Monday), default to this week's Monday
+  let weekStart: Date;
+  if (weekStartParam) {
+    weekStart = new Date(weekStartParam + "T00:00:00Z");
+  } else {
+    const now = new Date();
+    const localParts = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" }).formatToParts(now);
+    const y = parseInt(localParts.find(p => p.type === "year")!.value);
+    const m = parseInt(localParts.find(p => p.type === "month")!.value) - 1;
+    const d = parseInt(localParts.find(p => p.type === "day")!.value);
+    const wd = localParts.find(p => p.type === "weekday")!.value;
+    const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const dayOfWeek = dayMap[wd] ?? 0;
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    weekStart = new Date(Date.UTC(y, m, d + mondayOffset));
+  }
+
+  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  // Get calendars
+  const orgCalendars = await db.query.userCalendars.findMany({
+    where: eq(userCalendars.userId, user.id),
+  });
+  const calendarIds = orgCalendars.length > 0
+    ? orgCalendars.filter((cal) => cal.checkForConflicts).map((cal) => cal.calendarId)
+    : [user.email];
+
+  // Fetch events
+  const allEvents: { calendarId: string; eventId: string; summary: string; start: Date; end: Date }[] = [];
+  for (const calId of calendarIds) {
+    const events = await (await import("../lib/google.js")).listEvents(tokens, calId, weekStart, weekEnd);
+    allEvents.push(...events);
+  }
+
+  // Get ignored status
+  const ignoredRecords = await db.query.ignoredCalendarEvents.findMany({
+    where: eq(ignoredCalendarEvents.userId, user.id),
+  });
+  const ignoredKeys = new Set(ignoredRecords.map((e) => `${e.calendarId}:${e.googleEventId}`));
+
+  // Group by day of week (0=Mon in our grid)
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const dayColumns: string[] = [];
+
+  for (let i = 0; i < 7; i++) {
+    const dayDate = new Date(weekStart.getTime() + i * 24 * 60 * 60 * 1000);
+    const dateLabel = dayDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+    // Find events for this day
+    const dayEvents = allEvents.filter((e) => {
+      const eventDay = e.start.toLocaleDateString("en-US", { weekday: "short", timeZone: tz });
+      const dayDateStr = dayDate.toISOString().slice(0, 10);
+      const eventDateStr = e.start.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
+      // Also include all-day events that span this date
+      if (eventDateStr === dayDateStr) return true;
+      // All-day events: check if day falls within range
+      if (e.start <= dayDate && e.end > dayDate) return true;
+      return false;
+    }).sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    const eventsHtml = dayEvents.map((e) => {
+      const isIgnored = ignoredKeys.has(`${e.calendarId}:${e.eventId}`);
+      const startTime = e.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+      const endTime = e.end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+      // Check if all-day event (spans 24h+ starting at midnight)
+      const durationMs = e.end.getTime() - e.start.getTime();
+      const isAllDay = durationMs >= 23 * 60 * 60 * 1000;
+      const timeLabel = isAllDay ? "All day" : `${startTime} – ${endTime}`;
+      const ignoredClass = isIgnored ? " ignored" : "";
+
+      return `<div class="week-event${ignoredClass}" onclick="toggleCalEvent('${e.calendarId}', '${e.eventId}', '${e.summary.replace(/'/g, "\\'")}', ${isIgnored}, this)">
+        <div class="week-event-name">${e.summary}</div>
+        <div class="week-event-time">${timeLabel}</div>
+      </div>`;
+    }).join("");
+
+    const emptyClass = dayEvents.length === 0 ? " week-day-empty" : "";
+    dayColumns.push(`<div class="week-day-col${emptyClass}">
+      <div class="week-day-header"><span class="week-day-name">${days[i]}</span><span class="week-day-date">${dateLabel}</span></div>
+      <div class="week-day-events">${eventsHtml || '<div class="week-event-none">No events</div>'}</div>
+    </div>`);
+  }
+
+  const weekLabel = weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
+    + " – "
+    + new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+  return c.json({
+    html: dayColumns.join(""),
+    weekLabel,
+    weekStart: weekStart.toISOString().slice(0, 10),
+  });
+});
+
 // ── API: Ignore a Calendar Event ─────────────────────────────────────────────
 
 dashboardRoutes.post("/events/ignore", async (c) => {
@@ -770,10 +876,6 @@ function renderDashboardPage(
               <h4 class="preview-section-title">Available Windows</h4>
               <div id="newMeetingSlots" class="preview-slots-list"></div>
             </div>
-            <details class="preview-section">
-              <summary class="preview-section-title preview-toggle">Blocking Events</summary>
-              <div id="newMeetingEvents" class="blocking-events-list"></div>
-            </details>
           </div>
 
           <div class="modal-footer">
@@ -1095,7 +1197,6 @@ function renderDashboardPage(
     async function onMeetingTypeChange(meetingTypeId) {
       const preview = document.getElementById('newMeetingPreview');
       const slotsEl = document.getElementById('newMeetingSlots');
-      const eventsEl = document.getElementById('newMeetingEvents');
 
       if (!meetingTypeId) {
         preview.style.display = 'none';
@@ -1103,13 +1204,8 @@ function renderDashboardPage(
       }
 
       slotsEl.innerHTML = '<div class="preview-loading">Loading availability...</div>';
-      eventsEl.innerHTML = '';
       preview.style.display = '';
 
-      await loadPreviewSlots(meetingTypeId, slotsEl, eventsEl);
-    }
-
-    async function loadPreviewSlots(meetingTypeId, slotsEl, eventsEl) {
       try {
         const res = await fetch('/dashboard/preview-slots?meetingTypeId=' + meetingTypeId);
         const data = await res.json();
@@ -1118,56 +1214,8 @@ function renderDashboardPage(
           return;
         }
         slotsEl.innerHTML = data.slotsHtml;
-        eventsEl.innerHTML = data.eventsHtml;
       } catch (e) {
         slotsEl.innerHTML = '<div class="preview-empty">Failed to load availability.</div>';
-      }
-    }
-
-    async function ignoreEvent(calendarId, eventId, summary, btn) {
-      btn.disabled = true;
-      try {
-        await fetch('/dashboard/events/ignore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ calendarId, googleEventId: eventId, summary }),
-        });
-        // Refresh the preview
-        const typeSelect = document.querySelector('#newMeetingForm select[name="meetingTypeId"]');
-        const settingsTypeSelect = document.querySelector('#settingsPreviewTypeId');
-        if (typeSelect && typeSelect.value) {
-          await onMeetingTypeChange(typeSelect.value);
-        }
-        if (settingsTypeSelect && settingsTypeSelect.dataset.active) {
-          await loadSettingsPreview(settingsTypeSelect.dataset.active);
-        }
-        toast('Event ignored');
-      } catch (e) {
-        toast('Failed to ignore event');
-        btn.disabled = false;
-      }
-    }
-
-    async function unignoreEvent(calendarId, eventId, summary, btn) {
-      btn.disabled = true;
-      try {
-        await fetch('/dashboard/events/unignore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ calendarId, googleEventId: eventId }),
-        });
-        const typeSelect = document.querySelector('#newMeetingForm select[name="meetingTypeId"]');
-        const settingsTypeSelect = document.querySelector('#settingsPreviewTypeId');
-        if (typeSelect && typeSelect.value) {
-          await onMeetingTypeChange(typeSelect.value);
-        }
-        if (settingsTypeSelect && settingsTypeSelect.dataset.active) {
-          await loadSettingsPreview(settingsTypeSelect.dataset.active);
-        }
-        toast('Event restored');
-      } catch (e) {
-        toast('Failed to restore event');
-        btn.disabled = false;
       }
     }
 
@@ -1220,46 +1268,6 @@ function renderDashboardPage(
       return false;
     }
 
-    // ── Settings Preview ────────────────
-
-    async function toggleSettingsPreview(meetingTypeId, btn) {
-      const panel = document.getElementById('settings-preview-' + meetingTypeId);
-      if (panel.style.display === 'none' || !panel.style.display) {
-        btn.textContent = 'Hide preview';
-        panel.style.display = '';
-        panel.innerHTML = '<div class="preview-loading">Loading availability...</div>';
-        const slotsEl = document.createElement('div');
-        slotsEl.id = 'settings-slots-' + meetingTypeId;
-        const eventsEl = document.createElement('div');
-        eventsEl.id = 'settings-events-' + meetingTypeId;
-        panel.innerHTML = '';
-        panel.appendChild(slotsEl);
-        panel.appendChild(eventsEl);
-
-        // Track which type is active for refresh after ignore/unignore
-        let tracker = document.querySelector('#settingsPreviewTypeId');
-        if (!tracker) {
-          tracker = document.createElement('div');
-          tracker.id = 'settingsPreviewTypeId';
-          tracker.style.display = 'none';
-          document.body.appendChild(tracker);
-        }
-        tracker.dataset.active = meetingTypeId;
-
-        await loadPreviewSlots(meetingTypeId, slotsEl, eventsEl);
-      } else {
-        btn.textContent = 'Preview windows';
-        panel.style.display = 'none';
-      }
-    }
-
-    async function loadSettingsPreview(meetingTypeId) {
-      const slotsEl = document.getElementById('settings-slots-' + meetingTypeId);
-      const eventsEl = document.getElementById('settings-events-' + meetingTypeId);
-      if (slotsEl && eventsEl) {
-        await loadPreviewSlots(meetingTypeId, slotsEl, eventsEl);
-      }
-    }
   </script>
 </body>
 </html>`;
