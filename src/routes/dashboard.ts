@@ -489,31 +489,46 @@ dashboardRoutes.get("/calendar-events", async (c) => {
   });
   const ignoredKeys = new Set(ignoredRecords.map((e) => `${e.calendarId}:${e.googleEventId}`));
 
-  // Group by day of week (0=Mon in our grid)
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  // Build 7 day columns (Mon–Sun), comparing everything in the user's timezone
+  const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const dayColumns: string[] = [];
 
+  // Build an array of YYYY-MM-DD strings for each day of the week
+  const dayDates: string[] = [];
   for (let i = 0; i < 7; i++) {
-    const dayDate = new Date(weekStart.getTime() + i * 24 * 60 * 60 * 1000);
-    const dateLabel = dayDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    const d = new Date(weekStart.getTime() + i * 24 * 60 * 60 * 1000);
+    dayDates.push(d.toLocaleDateString("en-CA", { timeZone: "UTC" })); // YYYY-MM-DD
+  }
 
-    // Find events for this day
+  for (let i = 0; i < 7; i++) {
+    const dayDateStr = dayDates[i]; // e.g. "2026-03-30"
+    const dayDateObj = new Date(dayDateStr + "T12:00:00Z"); // noon UTC to avoid edge issues in formatting
+    const dateLabel = dayDateObj.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+    // Match events to this day using the user's local timezone
     const dayEvents = allEvents.filter((e) => {
-      const eventDay = e.start.toLocaleDateString("en-US", { weekday: "short", timeZone: tz });
-      const dayDateStr = dayDate.toISOString().slice(0, 10);
-      const eventDateStr = e.start.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
-      // Also include all-day events that span this date
-      if (eventDateStr === dayDateStr) return true;
-      // All-day events: check if day falls within range
-      if (e.start <= dayDate && e.end > dayDate) return true;
+      // Get the event's local date
+      const eventLocalDate = e.start.toLocaleDateString("en-CA", { timeZone: tz });
+      if (eventLocalDate === dayDateStr) return true;
+      // All-day events may span multiple days — check if this day falls in range
+      const eventEndDate = e.end.toLocaleDateString("en-CA", { timeZone: tz });
+      // For multi-day events, check if dayDateStr is between start and end (exclusive)
+      if (dayDateStr > eventLocalDate && dayDateStr < eventEndDate) return true;
       return false;
     }).sort((a, b) => a.start.getTime() - b.start.getTime());
 
-    const eventsHtml = dayEvents.map((e) => {
+    // Deduplicate events that appear in multiple calendars (same eventId)
+    const seen = new Set<string>();
+    const uniqueEvents = dayEvents.filter((e) => {
+      if (seen.has(e.eventId)) return false;
+      seen.add(e.eventId);
+      return true;
+    });
+
+    const eventsHtml = uniqueEvents.map((e) => {
       const isIgnored = ignoredKeys.has(`${e.calendarId}:${e.eventId}`);
       const startTime = e.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
       const endTime = e.end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
-      // Check if all-day event (spans 24h+ starting at midnight)
       const durationMs = e.end.getTime() - e.start.getTime();
       const isAllDay = durationMs >= 23 * 60 * 60 * 1000;
       const timeLabel = isAllDay ? "All day" : `${startTime} – ${endTime}`;
@@ -525,16 +540,16 @@ dashboardRoutes.get("/calendar-events", async (c) => {
       </div>`;
     }).join("");
 
-    const emptyClass = dayEvents.length === 0 ? " week-day-empty" : "";
+    const emptyClass = uniqueEvents.length === 0 ? " week-day-empty" : "";
     dayColumns.push(`<div class="week-day-col${emptyClass}">
-      <div class="week-day-header"><span class="week-day-name">${days[i]}</span><span class="week-day-date">${dateLabel}</span></div>
+      <div class="week-day-header"><span class="week-day-name">${dayNames[i]}</span><span class="week-day-date">${dateLabel}</span></div>
       <div class="week-day-events">${eventsHtml || '<div class="week-event-none">No events</div>'}</div>
     </div>`);
   }
 
-  const weekLabel = weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
+  const weekLabel = new Date(dayDates[0] + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
     + " – "
-    + new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    + new Date(dayDates[6] + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
   return c.json({
     html: dayColumns.join(""),
