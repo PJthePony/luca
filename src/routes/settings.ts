@@ -1025,6 +1025,83 @@ export function renderSettingsBody(
     }
 
     // ── Google Places Autocomplete ──
+    // ── Availability Preview ──────────────────
+
+    async function toggleSettingsPreview(meetingTypeId, btn) {
+      const panel = document.getElementById('settings-preview-' + meetingTypeId);
+      if (!panel) return;
+      if (panel.style.display === 'none' || !panel.style.display) {
+        btn.textContent = 'Hide preview';
+        panel.style.display = '';
+        panel.innerHTML = '<div class="preview-loading">Loading availability...</div>';
+        try {
+          const res = await fetch('/dashboard/preview-slots?meetingTypeId=' + meetingTypeId);
+          const data = await res.json();
+          if (data.error) {
+            panel.innerHTML = '<div class="preview-empty">' + (data.error) + '</div>';
+            return;
+          }
+          panel.innerHTML =
+            '<div class="preview-section"><h4 class="preview-section-title">Available Windows</h4><div class="preview-slots-list">' + data.slotsHtml + '</div></div>' +
+            '<details class="preview-section"><summary class="preview-section-title preview-toggle">Blocking Events</summary><div class="blocking-events-list">' + data.eventsHtml + '</div></details>';
+        } catch (e) {
+          panel.innerHTML = '<div class="preview-empty">Failed to load availability.</div>';
+        }
+      } else {
+        btn.textContent = 'Preview windows';
+        panel.style.display = 'none';
+      }
+    }
+
+    async function ignoreEvent(calendarId, eventId, summary, btn) {
+      btn.disabled = true;
+      try {
+        await fetch('/dashboard/events/ignore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calendarId: calendarId, googleEventId: eventId, summary: summary }),
+        });
+        // Re-expand any open previews
+        document.querySelectorAll('[id^="preview-btn-"]').forEach(b => {
+          if (b.textContent === 'Hide preview') {
+            const typeId = b.id.replace('preview-btn-', '');
+            b.textContent = 'Preview windows';
+            const p = document.getElementById('settings-preview-' + typeId);
+            if (p) p.style.display = 'none';
+            toggleSettingsPreview(typeId, b);
+          }
+        });
+        toast('Event ignored');
+      } catch (e) {
+        toast('Failed to ignore event');
+        btn.disabled = false;
+      }
+    }
+
+    async function unignoreEvent(calendarId, eventId, summary, btn) {
+      btn.disabled = true;
+      try {
+        await fetch('/dashboard/events/unignore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calendarId: calendarId, googleEventId: eventId }),
+        });
+        document.querySelectorAll('[id^="preview-btn-"]').forEach(b => {
+          if (b.textContent === 'Hide preview') {
+            const typeId = b.id.replace('preview-btn-', '');
+            b.textContent = 'Preview windows';
+            const p = document.getElementById('settings-preview-' + typeId);
+            if (p) p.style.display = 'none';
+            toggleSettingsPreview(typeId, b);
+          }
+        });
+        toast('Event restored');
+      } catch (e) {
+        toast('Failed to restore event');
+        btn.disabled = false;
+      }
+    }
+
     ${googleMapsApiKey ? `
     let placesAutocomplete = null;
 
