@@ -1154,8 +1154,16 @@ export function renderSettingsBody(
     }
 
     async function toggleCalEvent(calendarId, eventId, summary, isIgnored, el) {
-      el.style.pointerEvents = 'none';
-      el.style.opacity = '0.5';
+      // Optimistic UI update — toggle immediately without re-fetching
+      const nowIgnored = !isIgnored;
+      if (nowIgnored) {
+        el.classList.add('ignored');
+      } else {
+        el.classList.remove('ignored');
+      }
+      // Update the onclick to reflect the new state
+      el.setAttribute('onclick', "toggleCalEvent('" + calendarId + "', '" + eventId + "', '" + summary.replace(/'/g, "\\'") + "', " + nowIgnored + ", this)");
+
       try {
         if (isIgnored) {
           await fetch('/dashboard/events/unignore', {
@@ -1163,22 +1171,24 @@ export function renderSettingsBody(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ calendarId, googleEventId: eventId }),
           });
-          toast('Event restored');
         } else {
           await fetch('/dashboard/events/ignore', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ calendarId, googleEventId: eventId, summary }),
           });
-          toast('Event ignored');
         }
-        // Refresh calendar and any open previews
-        loadWeekCalendar(currentWeekStart);
+        // Silently refresh open previews in the background
         refreshOpenPreviews();
       } catch (e) {
+        // Revert on failure
+        if (nowIgnored) {
+          el.classList.remove('ignored');
+        } else {
+          el.classList.add('ignored');
+        }
+        el.setAttribute('onclick', "toggleCalEvent('" + calendarId + "', '" + eventId + "', '" + summary.replace(/'/g, "\\'") + "', " + isIgnored + ", this)");
         toast('Failed to update event');
-        el.style.pointerEvents = '';
-        el.style.opacity = '';
       }
     }
 
