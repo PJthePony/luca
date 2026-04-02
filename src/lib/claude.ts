@@ -180,6 +180,7 @@ Instructions:
 - Your response_draft is the email Luca will send as a REPLY to the thread. It goes to the other participants (not the organizer, who is silently BCC'd).
 - Address the participants, not the organizer.
 - Do NOT sign off — the system appends "- Luca" automatically.
+- Do NOT include general availability or open time blocks in the response_draft. The system will append specific proposed meeting slots separately. Your draft should only be a friendly greeting/acknowledgment — never list days, time ranges, or availability windows.
 
 TIME PREFERENCE EXTRACTION (critical):
 - When the sender mentions specific days or times (e.g., "Tuesday afternoon", "next Thursday morning", "after 2pm"), you MUST resolve them to concrete ISO 8601 date ranges using the organizer's timezone (${tz}).

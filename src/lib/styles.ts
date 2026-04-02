@@ -458,6 +458,9 @@ export const settingsStyles = `
   .week-event-none { font-size: 0.7rem; color: var(--nxb-color-text-muted); padding: 0.25rem; text-align: center; }
 
   @media (max-width: 768px) {
+    .week-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 480px) {
     .week-grid { grid-template-columns: repeat(2, 1fr); }
     .week-day-col:last-child:nth-child(odd) { grid-column: 1 / -1; }
   }
@@ -1079,6 +1082,11 @@ export const dashboardStyles = `
   /* ── Settings modal wide variant ────────────── */
   .modal-wide .modal-content {
     max-width: 640px;
+  }
+  @media (min-width: 900px) {
+    .modal-wide .modal-content {
+      max-width: 820px;
+    }
   }
 
   /* ── Comms modal ────────────────────────────── */

@@ -311,6 +311,11 @@ export async function startRescheduling(
       }
     }
 
+    // Delete old proposed slots from the database
+    await tx
+      .delete(proposedSlots)
+      .where(eq(proposedSlots.meetingId, meetingId));
+
     // Transition to RESCHEDULING
     await tx
       .update(meetings)

@@ -576,8 +576,9 @@ function applyHardFilter(
  * Diversity pass: spread proposed slots across different days.
  * 1. Group scored slots by day (local date)
  * 2. Round-robin pick 1 per day (highest scoring from each day), cycle until 3
- * 3. Enforce 2-hour minimum gap between slots on the same day
- * 4. Backfill from top scores if fewer than 3
+ * 3. At most 2 slots per day to ensure at least 2 different days in the results
+ * 4. Enforce 4-hour minimum gap between slots on the same day (no back-to-back)
+ * 5. Backfill from top scores if fewer than 3
  */
 function applyDiversityPass(
   slots: ProposedSlot[],
@@ -585,7 +586,8 @@ function applyDiversityPass(
 ): ProposedSlot[] {
   if (slots.length <= 3) return slots;
 
-  const MIN_GAP_MS = 2 * 60 * 60 * 1000; // 2 hours
+  const MIN_GAP_MS = 4 * 60 * 60 * 1000; // 4 hours
+  const MAX_PER_DAY = 2; // cap per day to force spread across days
 
   // Group by local date string
   const byDay = new Map<string, ProposedSlot[]>();
@@ -602,7 +604,11 @@ function applyDiversityPass(
 
   const result: ProposedSlot[] = [];
   const dayIndices = new Map<string, number>();
-  for (const [day] of dayEntries) dayIndices.set(day, 0);
+  const dayPickCounts = new Map<string, number>();
+  for (const [day] of dayEntries) {
+    dayIndices.set(day, 0);
+    dayPickCounts.set(day, 0);
+  }
 
   // Round-robin: pick 1 from each day, cycle until we have 3
   let rounds = 0;
@@ -610,13 +616,16 @@ function applyDiversityPass(
     for (const [day, daySlots] of dayEntries) {
       if (result.length >= 3) break;
 
+      // Enforce max-per-day cap
+      if ((dayPickCounts.get(day) ?? 0) >= MAX_PER_DAY) continue;
+
       const idx = dayIndices.get(day)!;
       if (idx >= daySlots.length) continue;
 
       const candidate = daySlots[idx];
       dayIndices.set(day, idx + 1);
 
-      // Enforce 2-hour gap with already-picked slots on the same day
+      // Enforce minimum gap with already-picked slots on the same day
       const sameDayPicks = result.filter(
         (r) => getLocalDateString(r.start, tz) === day,
       );
@@ -626,8 +635,8 @@ function applyDiversityPass(
 
       if (!tooClose) {
         result.push(candidate);
+        dayPickCounts.set(day, (dayPickCounts.get(day) ?? 0) + 1);
       } else {
-        // Skip this one, try next from this day on next round
         // Advance index to find a non-conflicting slot
         let nextIdx = idx + 1;
         while (nextIdx < daySlots.length) {
@@ -638,6 +647,7 @@ function applyDiversityPass(
           if (!altTooClose) {
             result.push(alt);
             dayIndices.set(day, nextIdx + 1);
+            dayPickCounts.set(day, (dayPickCounts.get(day) ?? 0) + 1);
             break;
           }
           nextIdx++;
