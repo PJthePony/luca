@@ -182,8 +182,10 @@ simulatorRoutes.get("/", async (c) => {
     let fromName = '';
     let fromEmail = '';
     let subject = '';
+    let organizerEmail = '';
+    let lucaEmail = 'luca@tanzillo.ai';
 
-    function addMessage(from, body, direction) {
+    function addMessage(msgFrom, msgTo, body, direction) {
       const messages = document.getElementById('threadMessages');
       const div = document.createElement('div');
       div.className = 'msg ' + direction;
@@ -191,9 +193,10 @@ simulatorRoutes.get("/", async (c) => {
       const labelText = direction === 'inbound' ? 'THEM' : 'LUCA';
       div.innerHTML =
         '<div class="msg-header">' +
-          '<span class="msg-from">' + escapeHtml(from) + '</span>' +
+          '<span class="msg-from"><b>From:</b> ' + escapeHtml(msgFrom) + '</span>' +
           '<span class="msg-label ' + label + '">' + labelText + '</span>' +
         '</div>' +
+        '<div style="font-size:0.73rem; color: var(--nxb-color-text-muted); margin-bottom: 6px;"><b>To:</b> ' + escapeHtml(msgTo) + '</div>' +
         '<div class="msg-body">' + escapeHtml(body) + '</div>';
       messages.appendChild(div);
       messages.scrollTop = messages.scrollHeight;
@@ -263,15 +266,20 @@ simulatorRoutes.get("/", async (c) => {
         if (!res.ok) { startStatus.textContent = 'Error: ' + (data.error || 'Unknown'); return; }
 
         sessionId = data.sessionId;
+        organizerEmail = data.organizerEmail || '';
+        lucaEmail = data.lucaEmail || 'luca@tanzillo.ai';
 
         // Remove start form, show conversation
         document.getElementById('startForm').remove();
         document.getElementById('threadSubject').textContent = subject;
         document.getElementById('composeArea').style.display = 'block';
 
-        // Add messages
-        addMessage(fromName + ' <' + fromEmail + '>', body, 'inbound');
-        addMessage('Luca', data.composedText, 'outbound');
+        // Add messages: inbound is from person → to Luca (cc organizer), outbound is from Luca → to person (bcc organizer)
+        var personAddr = fromName + ' <' + fromEmail + '>';
+        var lucaAddr = 'Luca <' + lucaEmail + '>';
+        var orgAddr = organizerEmail ? ' (cc: ' + organizerEmail + ')' : '';
+        addMessage(personAddr, lucaAddr + orgAddr, body, 'inbound');
+        addMessage(lucaAddr, personAddr + (organizerEmail ? ' (bcc: ' + organizerEmail + ')' : ''), data.composedText, 'outbound');
 
         updateInspector(data);
       } catch (err) {
@@ -288,7 +296,11 @@ simulatorRoutes.get("/", async (c) => {
       btn.disabled = true;
       status.innerHTML = '<span class="spinner"></span> Running pipeline...';
 
-      addMessage(fromName + ' <' + fromEmail + '>', body, 'inbound');
+      var personAddr = fromName + ' <' + fromEmail + '>';
+      var lucaAddr = 'Luca <' + lucaEmail + '>';
+      var orgBcc = organizerEmail ? ' (bcc: ' + organizerEmail + ')' : '';
+      var orgCc = organizerEmail ? ' (cc: ' + organizerEmail + ')' : '';
+      addMessage(personAddr, lucaAddr + orgCc, body, 'inbound');
       document.getElementById('replyBody').value = '';
 
       try {
@@ -300,7 +312,7 @@ simulatorRoutes.get("/", async (c) => {
         const data = await res.json();
         if (!res.ok) { status.textContent = 'Error: ' + (data.error || 'Unknown'); btn.disabled = false; return; }
 
-        addMessage('Luca', data.composedText, 'outbound');
+        addMessage(lucaAddr, personAddr + orgBcc, data.composedText, 'outbound');
         updateInspector(data);
         status.textContent = data.timing?.total || '';
       } catch (err) {
@@ -446,6 +458,8 @@ simulatorRoutes.post("/run", async (c) => {
 
     return c.json({
       sessionId,
+      organizerEmail: (await db.query.users.findFirst({ where: eq(users.id, organizer.id) }))?.email ?? "",
+      lucaEmail: `luca@${env.MAILGUN_DOMAIN}`,
       extracted,
       composerContext: composerCtx,
       composedText,
