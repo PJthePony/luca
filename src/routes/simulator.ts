@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { meetings, emailThreads, emailMessages, participants, users, meetingTypes, availabilityRules, proposedSlots } from "../db/schema.js";
-import { extractIntent, composeEmail, reviewEmail } from "../services/ai-pipeline.js";
+import { extractIntent, runComposeQCLoop } from "../services/ai-pipeline.js";
+import type { PipelineResult } from "../services/ai-pipeline.js";
 import { formatSlot } from "../services/intent-handlers.js";
 import type { ComposerContext } from "../types/index.js";
 import { baseStyles, fontLinks, logoSvg } from "../lib/styles.js";
@@ -161,15 +162,10 @@ simulatorRoutes.get("/", async (c) => {
             <pre id="agent1Output">—</pre>
             <div class="timing" id="agent1Time"></div>
           </div>
-          <div class="agent-card">
-            <h3>Agent 2: Composer</h3>
-            <pre id="agent2Output">—</pre>
-            <div class="timing" id="agent2Time"></div>
-          </div>
-          <div class="agent-card">
-            <h3>Agent 3: QC <span class="badge" id="qcBadge" style="display:none;"></span></h3>
-            <div id="agent3Output"></div>
-            <div class="timing" id="agent3Time"></div>
+          <div id="attemptsContainer"></div>
+          <div class="agent-card" id="draftNotification" style="display: none; border-color: var(--nxb-color-accent);">
+            <h3 style="color: var(--nxb-color-accent);">Draft Notification (iMessage to you)</h3>
+            <pre id="draftNotificationText" style="background: #fffbf5; border-color: #fed7aa;"></pre>
           </div>
         </div>
       </div>
@@ -214,37 +210,72 @@ simulatorRoutes.get("/", async (c) => {
       document.getElementById('inspectorCards').style.flexDirection = 'column';
       document.getElementById('inspectorCards').style.gap = '12px';
 
-      // Agent 1
+      // Agent 1: Extractor
       document.getElementById('agent1Output').textContent = JSON.stringify(data.extracted, null, 2);
       document.getElementById('agent1Time').textContent = data.timing?.extract || '';
       const intentBadge = document.getElementById('intentBadge');
       intentBadge.style.display = 'inline';
       intentBadge.textContent = data.extracted.intent;
 
-      // Agent 2
-      document.getElementById('agent2Output').textContent = data.composedText || '—';
-      document.getElementById('agent2Time').textContent = data.timing?.compose || '';
+      // Attempts (Compose → QC loop)
+      const container = document.getElementById('attemptsContainer');
+      container.innerHTML = '';
+      const attempts = data.pipeline?.attempts || [];
 
-      // Agent 3
-      const qc = data.qcResult;
-      const badge = document.getElementById('qcBadge');
-      badge.style.display = 'inline';
-      badge.className = 'badge ' + (qc.verdict === 'pass' ? 'pass' : 'fail');
-      badge.textContent = qc.verdict.toUpperCase();
+      attempts.forEach(function(attempt) {
+        const card = document.createElement('div');
+        card.className = 'agent-card';
+        const isPass = attempt.qcResult.verdict === 'pass';
+        const badgeClass = isPass ? 'pass' : 'fail';
+        const attemptLabel = attempts.length > 1 ? ' (attempt ' + attempt.attempt + '/' + attempts.length + ')' : '';
 
-      let qcHtml = '';
-      if (qc.issues?.length) {
-        qcHtml += '<p style="font-size:0.78rem;font-weight:500;margin-bottom:3px;">Issues:</p><ul>' + qc.issues.map(function(i) { return '<li>' + escapeHtml(i) + '</li>'; }).join('') + '</ul>';
+        let qcHtml = '';
+        if (attempt.qcResult.issues?.length) {
+          qcHtml += '<p style="font-size:0.75rem;font-weight:500;margin:6px 0 3px;">Issues:</p><ul style="font-size:0.75rem;">' + attempt.qcResult.issues.map(function(i) { return '<li>' + escapeHtml(i) + '</li>'; }).join('') + '</ul>';
+        }
+        if (attempt.qcResult.questions?.length) {
+          qcHtml += '<p style="font-size:0.75rem;font-weight:500;margin:6px 0 3px;">Questions:</p><ul style="font-size:0.75rem;">' + attempt.qcResult.questions.map(function(q) { return '<li>' + escapeHtml(q) + '</li>'; }).join('') + '</ul>';
+        }
+        if (attempt.qcResult.suggestions?.length) {
+          qcHtml += '<p style="font-size:0.75rem;font-weight:500;margin:6px 0 3px;">Suggestions:</p><ul style="font-size:0.75rem;">' + attempt.qcResult.suggestions.map(function(s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul>';
+        }
+        if (isPass && !qcHtml) qcHtml = '<p style="font-size:0.75rem;color:#059669;">QC passed.</p>';
+
+        card.innerHTML =
+          '<h3>Compose + QC' + escapeHtml(attemptLabel) + ' <span class="badge ' + badgeClass + '">' + attempt.qcResult.verdict.toUpperCase() + '</span></h3>' +
+          '<pre>' + escapeHtml(attempt.composedText) + '</pre>' +
+          '<div class="timing">Compose: ' + (attempt.composeTiming || '') + ' | QC: ' + (attempt.qcTiming || '') + '</div>' +
+          qcHtml;
+        container.appendChild(card);
+      });
+
+      // Draft notification preview (what P.J. would see via iMessage)
+      const notifCard = document.getElementById('draftNotification');
+      const notifText = document.getElementById('draftNotificationText');
+      notifCard.style.display = 'block';
+
+      const pipeline = data.pipeline || {};
+      const passed = pipeline.passed;
+      const finalQC = pipeline.finalQC || {};
+      const recipients = fromEmail || 'recipient';
+      const title = data.composerContext?.meetingTitle || 'Meeting';
+      const code = 'SIM1';
+
+      if (passed) {
+        notifText.textContent =
+          'Luca drafted a reply for "' + title + '" to ' + recipients + ':\\n\\n---\\n' +
+          (data.composedText || '').slice(0, 500) +
+          '\\n---\\n\\nReply: "send ' + code + '" to approve\\nReply: "reject ' + code + '" to discard\\nReply: "edit ' + code + ': [your version]" to modify and send';
+      } else {
+        var issues = (finalQC.issues || []).map(function(i) { return '- ' + i; }).join('\\n');
+        var questions = (finalQC.questions || []).map(function(q) { return '- ' + q; }).join('\\n');
+        notifText.textContent =
+          'Luca\\'s QC flagged issues with a draft for "' + title + '":\\n\\n' +
+          (issues ? 'Issues:\\n' + issues + '\\n\\n' : '') +
+          (questions ? 'Questions:\\n' + questions + '\\n\\n' : '') +
+          '---\\n' + (data.composedText || '').slice(0, 500) +
+          '\\n---\\n\\nReply: "send ' + code + '" to send anyway\\nReply: "reject ' + code + '" to discard';
       }
-      if (qc.questions?.length) {
-        qcHtml += '<p style="font-size:0.78rem;font-weight:500;margin:6px 0 3px;">Questions:</p><ul>' + qc.questions.map(function(q) { return '<li>' + escapeHtml(q) + '</li>'; }).join('') + '</ul>';
-      }
-      if (qc.suggestions?.length) {
-        qcHtml += '<p style="font-size:0.78rem;font-weight:500;margin:6px 0 3px;">Suggestions:</p><ul>' + qc.suggestions.map(function(s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul>';
-      }
-      if (!qcHtml) qcHtml = '<p style="font-size:0.78rem;color:#059669;">No issues found.</p>';
-      document.getElementById('agent3Output').innerHTML = qcHtml;
-      document.getElementById('agent3Time').textContent = data.timing?.qc || '';
     }
 
     async function startConversation() {
@@ -426,16 +457,11 @@ simulatorRoutes.post("/run", async (c) => {
       originalEmailSummary: extracted.meeting_context_summary,
     });
 
-    // Agent 2: Compose
+    // Agents 2+3: Compose → QC loop (up to 3 attempts)
     const threadHistoryStr = `[inbound] From: ${body.fromName}\n${body.emailBody}`;
-    const composeStart = Date.now();
-    const composedText = await composeEmail(extracted, composerCtx, threadHistoryStr);
-    timing.compose = `${Date.now() - composeStart}ms`;
-
-    // Agent 3: QC
-    const qcStart = Date.now();
-    const qcResult = await reviewEmail(composedText, threadHistoryStr, extracted, composerCtx);
-    timing.qc = `${Date.now() - qcStart}ms`;
+    const loopStart = Date.now();
+    const pipelineResult = await runComposeQCLoop(extracted, composerCtx, threadHistoryStr);
+    timing.composeQCLoop = `${Date.now() - loopStart}ms`;
     timing.total = `${Date.now() - totalStart}ms`;
 
     // Create session for follow-up replies
@@ -449,9 +475,9 @@ simulatorRoutes.post("/run", async (c) => {
       subject: body.subject,
       threadHistory: [
         `[inbound] From: ${body.fromName}\n${body.emailBody}`,
-        `[outbound] From: Luca\n${composedText}`,
+        `[outbound] From: Luca\n${pipelineResult.finalText}`,
       ],
-      lastLucaResponse: composedText,
+      lastLucaResponse: pipelineResult.finalText,
       proposedSlots: simSlots.raw,
       meetingStatus: extracted.intent === "schedule_new" ? "proposed" : "draft",
     });
@@ -462,8 +488,8 @@ simulatorRoutes.post("/run", async (c) => {
       lucaEmail: `luca@${env.MAILGUN_DOMAIN}`,
       extracted,
       composerContext: composerCtx,
-      composedText,
-      qcResult,
+      composedText: pipelineResult.finalText,
+      pipeline: pipelineResult,
       timing,
     });
   } catch (err) {
@@ -557,26 +583,21 @@ simulatorRoutes.post("/reply", async (c) => {
       session.meetingStatus = "cancelled";
     }
 
-    // Agent 2: Compose with full thread history
-    const composeStart = Date.now();
-    const composedText = await composeEmail(extracted, composerCtx, threadHistoryStr);
-    timing.compose = `${Date.now() - composeStart}ms`;
-
-    // Agent 3: QC with full thread history
-    const qcStart = Date.now();
-    const qcResult = await reviewEmail(composedText, threadHistoryStr, extracted, composerCtx);
-    timing.qc = `${Date.now() - qcStart}ms`;
+    // Agents 2+3: Compose → QC loop (up to 3 attempts)
+    const loopStart = Date.now();
+    const pipelineResult = await runComposeQCLoop(extracted, composerCtx, threadHistoryStr);
+    timing.composeQCLoop = `${Date.now() - loopStart}ms`;
     timing.total = `${Date.now() - totalStart}ms`;
 
     // Update session
-    session.threadHistory.push(`[outbound] From: Luca\n${composedText}`);
-    session.lastLucaResponse = composedText;
+    session.threadHistory.push(`[outbound] From: Luca\n${pipelineResult.finalText}`);
+    session.lastLucaResponse = pipelineResult.finalText;
 
     return c.json({
       extracted,
       composerContext: composerCtx,
-      composedText,
-      qcResult,
+      composedText: pipelineResult.finalText,
+      pipeline: pipelineResult,
       timing,
     });
   } catch (err) {

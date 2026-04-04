@@ -8,7 +8,7 @@ import {
   buildCalendarDescription,
 } from "./intent-handlers.js";
 import type { IntentContext } from "./intent-handlers.js";
-import { composeEmail, reviewEmail } from "./ai-pipeline.js";
+import { runComposeQCLoop } from "./ai-pipeline.js";
 import { createDraft, updateDraftWithQC } from "./draft-manager.js";
 import { notifyDraftReady } from "./notification.js";
 import { sendThreadedReply } from "./email.js";
@@ -176,8 +176,8 @@ export async function retryMeetingById(meetingId: string, userId: string): Promi
     return true;
   }
 
-  // Agent 2: Compose
-  const composedText = await composeEmail(extracted, result.composerContext, threadHistory);
+  // Agents 2+3: Compose → QC loop
+  const pipelineResult = await runComposeQCLoop(extracted, result.composerContext, threadHistory);
 
   const emailSubject = thread.subject.startsWith("Re:")
     ? thread.subject
@@ -191,26 +191,24 @@ export async function retryMeetingById(meetingId: string, userId: string): Promi
     toEmails: replyTo,
     bccEmails: [organizer.email],
     subject: emailSubject,
-    composedText,
+    composedText: pipelineResult.finalText,
     extractedData: extracted,
-    composerOutput: result.composerContext,
+    composerOutput: { composerContext: result.composerContext, attempts: pipelineResult.attempts },
   });
 
-  // Agent 3: QC
-  const qcResult = await reviewEmail(composedText, threadHistory, extracted, result.composerContext);
-  await updateDraftWithQC(draft.id, qcResult, "pending_approval");
+  await updateDraftWithQC(draft.id, pipelineResult.finalQC, "pending_approval");
 
   // Notify P.J.
   await notifyDraftReady({
-    type: qcResult.verdict === "pass" ? "draft_ready" : "draft_flagged",
+    type: pipelineResult.passed ? "draft_ready" : "draft_flagged",
     userId: organizer.id,
     meetingTitle: meeting.title ?? thread.subject,
     shortCode: draft.shortCode,
-    composedText,
+    composedText: pipelineResult.finalText,
     recipients: replyTo,
-    issues: qcResult.issues,
-    questions: qcResult.questions,
-    suggestions: qcResult.suggestions,
+    issues: pipelineResult.finalQC.issues,
+    questions: pipelineResult.finalQC.questions,
+    suggestions: pipelineResult.finalQC.suggestions,
   });
 
   console.log(`Retried meeting ${meeting.shortId} — draft ${draft.shortCode} pending approval`);

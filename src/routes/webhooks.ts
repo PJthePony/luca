@@ -16,7 +16,7 @@ import {
   buildCalendarDescription,
 } from "../services/intent-handlers.js";
 import type { IntentContext } from "../services/intent-handlers.js";
-import { composeEmail, reviewEmail } from "../services/ai-pipeline.js";
+import { runComposeQCLoop } from "../services/ai-pipeline.js";
 import { createDraft, updateDraftWithQC } from "../services/draft-manager.js";
 import { sendThreadedReply } from "../services/email.js";
 import { EmailDirection } from "../types/index.js";
@@ -218,15 +218,15 @@ webhookRoutes.post("/inbound", async (c) => {
       return c.json({ status: "processed", intent: extracted.intent, pipeline: "skipped" });
     }
 
-    // Agent 2: Compose email
-    const composedText = await composeEmail(extracted, result.composerContext, threadHistory);
+    // Agents 2+3: Compose → QC loop (up to 3 attempts)
+    const pipelineResult = await runComposeQCLoop(extracted, result.composerContext, threadHistory);
 
     // Build email subject
     const emailSubject2 = thread.subject.startsWith("Re:")
       ? thread.subject
       : `Re: ${thread.subject}`;
 
-    // Create draft in DB
+    // Create draft in DB with final result
     const draft = await createDraft({
       meetingId: meeting.id,
       threadId: thread.id,
@@ -234,30 +234,23 @@ webhookRoutes.post("/inbound", async (c) => {
       toEmails: replyTo,
       bccEmails: [organizer.email],
       subject: emailSubject2,
-      composedText,
+      composedText: pipelineResult.finalText,
       extractedData: extracted,
-      composerOutput: result.composerContext,
+      composerOutput: { composerContext: result.composerContext, attempts: pipelineResult.attempts },
     });
 
-    // Agent 3: QC review
-    const qcResult = await reviewEmail(
-      composedText,
-      threadHistory,
-      extracted,
-      result.composerContext,
-    );
+    // Update draft with final QC results
+    await updateDraftWithQC(draft.id, pipelineResult.finalQC, "pending_approval");
 
-    // Update draft with QC results
-    const draftStatus = qcResult.verdict === "pass" ? "pending_approval" : "pending_approval";
-    await updateDraftWithQC(draft.id, qcResult, draftStatus);
+    const qcResult = pipelineResult.finalQC;
 
     // Notify P.J. via iMessage
     await notifyDraftReady({
-      type: qcResult.verdict === "pass" ? "draft_ready" : "draft_flagged",
+      type: pipelineResult.passed ? "draft_ready" : "draft_flagged",
       userId: organizer.id,
       meetingTitle: meeting.title ?? email.subject,
       shortCode: draft.shortCode,
-      composedText,
+      composedText: pipelineResult.finalText,
       recipients: replyTo,
       issues: qcResult.issues,
       questions: qcResult.questions,

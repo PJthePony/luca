@@ -241,6 +241,7 @@ export async function composeEmail(
   extracted: ExtractedData,
   composerCtx: ComposerContext,
   threadHistory: string,
+  qcFeedback?: { previousDraft: string; issues: string[]; suggestions: string[] },
 ): Promise<string> {
   const sections: string[] = [];
 
@@ -295,7 +296,25 @@ RULES:
 5. Be concise. No filler. No exclamation marks. Professional but warm.
 6. NEVER invent times, dates, names, or links. Use ONLY what is provided.
 7. Do NOT mention the organizer by name in the email — they are silently BCC'd.
-8. If this is a freeform/unrelated message, write a helpful but brief response.`;
+8. If this is a freeform/unrelated message, write a helpful but brief response.${qcFeedback ? `
+
+IMPORTANT — REVISION REQUIRED:
+A previous draft was rejected by quality control. You MUST fix the issues listed below.
+
+PREVIOUS DRAFT THAT FAILED QC:
+---
+${qcFeedback.previousDraft}
+---
+
+ISSUES TO FIX:
+${qcFeedback.issues.map((issue) => `- ${issue}`).join("\n")}
+${qcFeedback.suggestions.length > 0 ? `\nSUGGESTIONS TO INCORPORATE:\n${qcFeedback.suggestions.map((s) => `- ${s}`).join("\n")}` : ""}
+
+Write a completely new draft that addresses ALL of the above issues. Do not repeat the same mistakes.` : ""}`;
+
+  const userMessage = qcFeedback
+    ? `Rewrite the email for the "${composerCtx.intent}" intent. The previous draft failed QC — fix all the issues listed in the system prompt.`
+    : `Compose the email for the "${composerCtx.intent}" intent.`;
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-5-20250929",
@@ -306,7 +325,7 @@ RULES:
     messages: [
       {
         role: "user",
-        content: `Compose the email for the "${composerCtx.intent}" intent.`,
+        content: userMessage,
       },
     ],
   });
@@ -434,4 +453,72 @@ ${threadHistory ? `FULL THREAD HISTORY:\n${threadHistory}` : "No prior messages 
     questions: input.questions ?? [],
     suggestions: input.suggestions ?? [],
   };
+}
+
+// ── Compose → QC Loop ───────────────────────────────────────────────────
+
+const MAX_QC_ATTEMPTS = 3;
+
+export interface PipelineAttempt {
+  attempt: number;
+  composedText: string;
+  qcResult: QCResult;
+  composeTiming: string;
+  qcTiming: string;
+}
+
+export interface PipelineResult {
+  finalText: string;
+  finalQC: QCResult;
+  attempts: PipelineAttempt[];
+  passed: boolean;
+}
+
+/**
+ * Run the Compose → QC loop up to MAX_QC_ATTEMPTS times.
+ * If QC fails, feeds issues back to the Composer for a rewrite.
+ * Returns the final result — either a passing draft or the best attempt after exhausting retries.
+ */
+export async function runComposeQCLoop(
+  extracted: ExtractedData,
+  composerCtx: ComposerContext,
+  threadHistory: string,
+): Promise<PipelineResult> {
+  const attempts: PipelineAttempt[] = [];
+  let lastDraft = "";
+  let lastQC: QCResult = { verdict: "fail", issues: [], questions: [], suggestions: [] };
+
+  for (let attempt = 1; attempt <= MAX_QC_ATTEMPTS; attempt++) {
+    // Compose (with QC feedback on retries)
+    const composeStart = Date.now();
+    const qcFeedback = attempt > 1
+      ? { previousDraft: lastDraft, issues: lastQC.issues, suggestions: lastQC.suggestions }
+      : undefined;
+    const composedText = await composeEmail(extracted, composerCtx, threadHistory, qcFeedback);
+    const composeTiming = `${Date.now() - composeStart}ms`;
+
+    // QC
+    const qcStart = Date.now();
+    const qcResult = await reviewEmail(composedText, threadHistory, extracted, composerCtx);
+    const qcTiming = `${Date.now() - qcStart}ms`;
+
+    attempts.push({ attempt, composedText, qcResult, composeTiming, qcTiming });
+    lastDraft = composedText;
+    lastQC = qcResult;
+
+    // If QC passes or only has questions (no hard issues), stop
+    if (qcResult.verdict === "pass") {
+      return { finalText: composedText, finalQC: qcResult, attempts, passed: true };
+    }
+
+    // If QC has questions but no issues, treat as needing human input — don't retry
+    if (qcResult.issues.length === 0 && qcResult.questions.length > 0) {
+      return { finalText: composedText, finalQC: qcResult, attempts, passed: false };
+    }
+
+    console.log(`QC attempt ${attempt}/${MAX_QC_ATTEMPTS} failed: ${qcResult.issues.join("; ")}`);
+  }
+
+  // Exhausted retries — return last attempt for human review
+  return { finalText: lastDraft, finalQC: lastQC, attempts, passed: false };
 }
