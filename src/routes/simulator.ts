@@ -1,32 +1,19 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { meetings, emailThreads, participants, users, meetingTypes, availabilityRules } from "../db/schema.js";
+import { meetings, emailThreads, emailMessages, participants, users, meetingTypes, availabilityRules, proposedSlots } from "../db/schema.js";
 import { extractIntent, composeEmail, reviewEmail } from "../services/ai-pipeline.js";
-import { createDraft, updateDraftWithQC } from "../services/draft-manager.js";
-import {
-  handleScheduleNew,
-  handleConfirmTime,
-  handleReschedule,
-  handleDecline,
-  handleAskForMoreTimes,
-  handleFreeformOrUnrelated,
-  buildCalendarDescription,
-} from "../services/intent-handlers.js";
-import type { IntentContext } from "../services/intent-handlers.js";
-import type { IntentHandlerResult } from "../types/index.js";
-import type { GoogleTokens } from "../types/index.js";
+import { formatSlot } from "../services/intent-handlers.js";
+import type { ComposerContext } from "../types/index.js";
 import { baseStyles, fontLinks, logoSvg } from "../lib/styles.js";
 import { env } from "../config.js";
 import { nanoid } from "nanoid";
 
 export const simulatorRoutes = new Hono();
 
-/**
- * Simulator page — renders the UI for testing the email pipeline.
- */
+// ── Simulator Page ──────────────────────────────────────────────────────────
+
 simulatorRoutes.get("/", async (c) => {
-  // Get the first user (P.J.) for context
   const user = await db.query.users.findFirst();
   if (!user) return c.text("No user found", 500);
 
@@ -40,49 +27,68 @@ simulatorRoutes.get("/", async (c) => {
   <style>
     ${baseStyles}
     body { background: var(--nxb-color-bg); color: var(--nxb-color-text); line-height: 1.6; padding: 24px; }
-    .container { max-width: 1000px; margin: 0 auto; }
+    .container { max-width: 1100px; margin: 0 auto; }
     .header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
     .header h1 { font-size: 1.3rem; font-weight: 600; }
     .header a { color: var(--nxb-color-text-secondary); font-size: 0.85rem; text-decoration: none; margin-left: auto; }
     .header a:hover { color: var(--nxb-color-text); }
 
-    .sim-form { background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }
-    .sim-form h2 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: var(--nxb-color-text-secondary); }
-    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-    .form-row.full { grid-template-columns: 1fr; }
-    .form-group label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--nxb-color-text-secondary); margin-bottom: 4px; }
-    .form-group input, .form-group textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--nxb-color-border); border-radius: 6px; font-size: 0.85rem; }
-    .form-group textarea { min-height: 100px; resize: vertical; }
-    .btn-run { background: var(--nxb-color-primary); color: white; padding: 8px 20px; border-radius: 6px; font-weight: 500; font-size: 0.85rem; }
-    .btn-run:hover { background: var(--nxb-color-primary-hover); }
-    .btn-run:disabled { opacity: 0.5; cursor: not-allowed; }
+    .sim-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 800px) { .sim-layout { grid-template-columns: 1fr; } }
 
-    .results { display: none; }
-    .results.visible { display: block; }
-    .results h2 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: var(--nxb-color-text-secondary); }
-    .agent-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-    .agent-card { background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border); border-radius: 10px; padding: 16px; }
-    .agent-card h3 { font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
-    .agent-card .badge { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
+    /* Left: conversation thread */
+    .thread-panel { background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border); border-radius: 10px; padding: 20px; min-height: 500px; display: flex; flex-direction: column; }
+    .thread-panel h2 { font-size: 0.95rem; font-weight: 600; color: var(--nxb-color-text-secondary); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .thread-messages { flex: 1; overflow-y: auto; margin-bottom: 16px; }
+    .thread-empty { color: var(--nxb-color-text-muted); font-size: 0.85rem; text-align: center; padding: 40px 0; }
+
+    .msg { margin-bottom: 12px; border-radius: 8px; padding: 12px; font-size: 0.85rem; }
+    .msg.inbound { background: #f0f4f8; border: 1px solid #e2e8f0; }
+    .msg.outbound { background: #fffbf5; border: 1px solid #fed7aa; }
+    .msg-header { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 0.75rem; color: var(--nxb-color-text-secondary); }
+    .msg-from { font-weight: 600; }
+    .msg-label { font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
+    .msg-label.in { background: #e0e7ff; color: #3730a3; }
+    .msg-label.out { background: #fff7ed; color: #c2410c; }
+    .msg-body { white-space: pre-wrap; line-height: 1.5; }
+
+    /* Compose area at bottom of thread */
+    .compose-area { border-top: 1px solid var(--nxb-color-border); padding-top: 12px; }
+    .compose-area textarea { width: 100%; padding: 10px; border: 1px solid var(--nxb-color-border); border-radius: 6px; font-size: 0.85rem; min-height: 80px; resize: vertical; margin-bottom: 8px; }
+    .compose-controls { display: flex; gap: 8px; align-items: center; }
+    .btn { padding: 7px 16px; border-radius: 6px; font-weight: 500; font-size: 0.82rem; }
+    .btn-primary { background: var(--nxb-color-primary); color: white; }
+    .btn-primary:hover { background: var(--nxb-color-primary-hover); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-danger { background: white; color: var(--nxb-color-danger); border: 1px solid var(--nxb-color-danger); }
+    .btn-danger:hover { background: #fef2f2; }
+    .compose-status { font-size: 0.8rem; color: var(--nxb-color-text-secondary); margin-left: auto; }
+
+    /* Right: pipeline inspector */
+    .inspector-panel { display: flex; flex-direction: column; gap: 12px; }
+    .inspector-panel h2 { font-size: 0.95rem; font-weight: 600; color: var(--nxb-color-text-secondary); margin-bottom: 4px; }
+    .agent-card { background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border); border-radius: 10px; padding: 14px; }
+    .agent-card h3 { font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+    .agent-card pre { font-size: 0.72rem; background: #f8fafc; border: 1px solid var(--nxb-color-border); border-radius: 6px; padding: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; margin: 0; }
+    .agent-card ul { font-size: 0.78rem; padding-left: 16px; margin: 0; }
+    .agent-card li { margin-bottom: 3px; }
+    .badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
     .badge.pass { background: #dcfce7; color: #166534; }
     .badge.fail { background: #fee2e2; color: #991b1b; }
     .badge.intent { background: #e0e7ff; color: #3730a3; }
-    .agent-card pre { font-size: 0.75rem; background: #f8fafc; border: 1px solid var(--nxb-color-border); border-radius: 6px; padding: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; }
-    .agent-card ul { font-size: 0.8rem; padding-left: 16px; }
-    .agent-card li { margin-bottom: 4px; }
+    .timing { font-size: 0.7rem; color: var(--nxb-color-text-muted); margin-top: 4px; }
+    .inspector-empty { color: var(--nxb-color-text-muted); font-size: 0.85rem; text-align: center; padding: 40px 0; }
 
-    .final-preview { background: var(--nxb-color-surface); border: 2px solid var(--nxb-color-accent); border-radius: 10px; padding: 20px; }
-    .final-preview h3 { font-size: 0.9rem; font-weight: 600; margin-bottom: 12px; color: var(--nxb-color-accent); }
-    .final-preview .email-text { font-size: 0.85rem; white-space: pre-wrap; line-height: 1.6; background: #fffbf5; padding: 16px; border-radius: 6px; border: 1px solid #fed7aa; }
+    /* Start form (before conversation begins) */
+    .start-form { padding: 16px 0; }
+    .start-form .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+    .start-form .form-row.full { grid-template-columns: 1fr; }
+    .form-group label { display: block; font-size: 0.78rem; font-weight: 500; color: var(--nxb-color-text-secondary); margin-bottom: 3px; }
+    .form-group input, .form-group textarea { width: 100%; padding: 7px 10px; border: 1px solid var(--nxb-color-border); border-radius: 6px; font-size: 0.85rem; }
+    .form-group textarea { min-height: 80px; resize: vertical; }
 
-    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e2e8f0; border-top-color: var(--nxb-color-primary); border-radius: 50%; animation: spin 0.6s linear infinite; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #e2e8f0; border-top-color: var(--nxb-color-primary); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .timing { font-size: 0.75rem; color: var(--nxb-color-text-muted); margin-top: 8px; }
-
-    @media (max-width: 768px) {
-      .agent-grid { grid-template-columns: 1fr; }
-      .form-row { grid-template-columns: 1fr; }
-    }
   </style>
 </head>
 <body>
@@ -93,146 +99,258 @@ simulatorRoutes.get("/", async (c) => {
       <a href="/dashboard">&larr; Back to Dashboard</a>
     </div>
 
-    <div class="sim-form">
-      <h2>Compose Test Email</h2>
-      <form id="simForm" onsubmit="runSimulation(event)">
-        <div class="form-row">
-          <div class="form-group">
-            <label>From Name</label>
-            <input type="text" id="fromName" value="Jane Smith" required />
-          </div>
-          <div class="form-group">
-            <label>From Email</label>
-            <input type="email" id="fromEmail" value="jane@example.com" required />
-          </div>
-        </div>
-        <div class="form-row full">
-          <div class="form-group">
-            <label>Subject</label>
-            <input type="text" id="subject" value="Quick sync this week?" required />
-          </div>
-        </div>
-        <div class="form-row full">
-          <div class="form-group">
-            <label>Email Body</label>
-            <textarea id="emailBody" required>Hey! Would love to grab 30 minutes with you sometime this week to chat about the project. I'm free most afternoons. Let me know what works!</textarea>
-          </div>
-        </div>
-        <button type="submit" class="btn-run" id="runBtn">Run Through Pipeline</button>
-        <span id="status" style="margin-left: 12px; font-size: 0.85rem; color: var(--nxb-color-text-secondary);"></span>
-      </form>
-    </div>
+    <div class="sim-layout">
+      <!-- Left: Conversation Thread -->
+      <div class="thread-panel">
+        <h2>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          Conversation
+          <span id="threadSubject" style="font-weight:400; color: var(--nxb-color-text-muted); font-size: 0.8rem;"></span>
+        </h2>
 
-    <div class="results" id="results">
-      <h2>Pipeline Results</h2>
+        <div class="thread-messages" id="threadMessages">
+          <!-- Start form shown initially -->
+          <div id="startForm" class="start-form">
+            <p style="font-size:0.85rem; color: var(--nxb-color-text-secondary); margin-bottom: 14px;">Start a simulated conversation. You play the role of the person emailing Luca.</p>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Your Name (simulated)</label>
+                <input type="text" id="fromName" value="Jane Smith" />
+              </div>
+              <div class="form-group">
+                <label>Your Email (simulated)</label>
+                <input type="email" id="fromEmail" value="jane@example.com" />
+              </div>
+            </div>
+            <div class="form-row full">
+              <div class="form-group">
+                <label>Subject</label>
+                <input type="text" id="subject" value="Quick sync this week?" />
+              </div>
+            </div>
+            <div class="form-row full">
+              <div class="form-group">
+                <label>Email Body</label>
+                <textarea id="startBody">Hey! Would love to grab 30 minutes with you sometime this week to chat about the project. I'm free most afternoons. Let me know what works!</textarea>
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="startConversation()">Start Conversation</button>
+            <span id="startStatus" style="margin-left: 10px; font-size: 0.82rem; color: var(--nxb-color-text-secondary);"></span>
+          </div>
+        </div>
 
-      <div class="agent-grid">
-        <div class="agent-card" id="agent1Card">
-          <h3>Agent 1: Extractor</h3>
-          <pre id="agent1Output">—</pre>
-          <div class="timing" id="agent1Time"></div>
-        </div>
-        <div class="agent-card" id="agent2Card">
-          <h3>Agent 2: Composer</h3>
-          <pre id="agent2Output">—</pre>
-          <div class="timing" id="agent2Time"></div>
-        </div>
-        <div class="agent-card" id="agent3Card">
-          <h3>Agent 3: QC <span class="badge" id="qcBadge" style="display:none;"></span></h3>
-          <div id="agent3Output"></div>
-          <div class="timing" id="agent3Time"></div>
+        <!-- Reply compose (hidden until conversation starts) -->
+        <div class="compose-area" id="composeArea" style="display: none;">
+          <textarea id="replyBody" placeholder="Type a reply as the simulated person..."></textarea>
+          <div class="compose-controls">
+            <button class="btn btn-primary" id="replyBtn" onclick="sendReply()">Send Reply</button>
+            <button class="btn btn-danger" onclick="resetConversation()">New Conversation</button>
+            <span class="compose-status" id="replyStatus"></span>
+          </div>
         </div>
       </div>
 
-      <div class="final-preview">
-        <h3>Final Email Preview</h3>
-        <div class="email-text" id="finalEmail">—</div>
+      <!-- Right: Pipeline Inspector -->
+      <div class="inspector-panel">
+        <h2>Pipeline Inspector</h2>
+        <div id="inspectorEmpty" class="inspector-empty">Send a message to see the pipeline output.</div>
+
+        <div id="inspectorCards" style="display: none;">
+          <div class="agent-card">
+            <h3>Agent 1: Extractor <span class="badge intent" id="intentBadge" style="display:none;"></span></h3>
+            <pre id="agent1Output">—</pre>
+            <div class="timing" id="agent1Time"></div>
+          </div>
+          <div class="agent-card">
+            <h3>Agent 2: Composer</h3>
+            <pre id="agent2Output">—</pre>
+            <div class="timing" id="agent2Time"></div>
+          </div>
+          <div class="agent-card">
+            <h3>Agent 3: QC <span class="badge" id="qcBadge" style="display:none;"></span></h3>
+            <div id="agent3Output"></div>
+            <div class="timing" id="agent3Time"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
   <script>
-    async function runSimulation(e) {
-      e.preventDefault();
-      const btn = document.getElementById('runBtn');
-      const status = document.getElementById('status');
-      btn.disabled = true;
-      status.innerHTML = '<span class="spinner"></span> Running 3-agent pipeline...';
+    // Conversation state
+    let sessionId = null;
+    let fromName = '';
+    let fromEmail = '';
+    let subject = '';
 
-      document.getElementById('results').classList.add('visible');
-      document.getElementById('agent1Output').textContent = 'Running...';
-      document.getElementById('agent2Output').textContent = 'Waiting...';
-      document.getElementById('agent3Output').innerHTML = '<pre>Waiting...</pre>';
-      document.getElementById('finalEmail').textContent = 'Waiting...';
-      document.getElementById('qcBadge').style.display = 'none';
+    function addMessage(from, body, direction) {
+      const messages = document.getElementById('threadMessages');
+      const div = document.createElement('div');
+      div.className = 'msg ' + direction;
+      const label = direction === 'inbound' ? 'in' : 'out';
+      const labelText = direction === 'inbound' ? 'THEM' : 'LUCA';
+      div.innerHTML =
+        '<div class="msg-header">' +
+          '<span class="msg-from">' + escapeHtml(from) + '</span>' +
+          '<span class="msg-label ' + label + '">' + labelText + '</span>' +
+        '</div>' +
+        '<div class="msg-body">' + escapeHtml(body) + '</div>';
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    function updateInspector(data) {
+      document.getElementById('inspectorEmpty').style.display = 'none';
+      document.getElementById('inspectorCards').style.display = 'flex';
+      document.getElementById('inspectorCards').style.flexDirection = 'column';
+      document.getElementById('inspectorCards').style.gap = '12px';
+
+      // Agent 1
+      document.getElementById('agent1Output').textContent = JSON.stringify(data.extracted, null, 2);
+      document.getElementById('agent1Time').textContent = data.timing?.extract || '';
+      const intentBadge = document.getElementById('intentBadge');
+      intentBadge.style.display = 'inline';
+      intentBadge.textContent = data.extracted.intent;
+
+      // Agent 2
+      document.getElementById('agent2Output').textContent = data.composedText || '—';
+      document.getElementById('agent2Time').textContent = data.timing?.compose || '';
+
+      // Agent 3
+      const qc = data.qcResult;
+      const badge = document.getElementById('qcBadge');
+      badge.style.display = 'inline';
+      badge.className = 'badge ' + (qc.verdict === 'pass' ? 'pass' : 'fail');
+      badge.textContent = qc.verdict.toUpperCase();
+
+      let qcHtml = '';
+      if (qc.issues?.length) {
+        qcHtml += '<p style="font-size:0.78rem;font-weight:500;margin-bottom:3px;">Issues:</p><ul>' + qc.issues.map(function(i) { return '<li>' + escapeHtml(i) + '</li>'; }).join('') + '</ul>';
+      }
+      if (qc.questions?.length) {
+        qcHtml += '<p style="font-size:0.78rem;font-weight:500;margin:6px 0 3px;">Questions:</p><ul>' + qc.questions.map(function(q) { return '<li>' + escapeHtml(q) + '</li>'; }).join('') + '</ul>';
+      }
+      if (qc.suggestions?.length) {
+        qcHtml += '<p style="font-size:0.78rem;font-weight:500;margin:6px 0 3px;">Suggestions:</p><ul>' + qc.suggestions.map(function(s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul>';
+      }
+      if (!qcHtml) qcHtml = '<p style="font-size:0.78rem;color:#059669;">No issues found.</p>';
+      document.getElementById('agent3Output').innerHTML = qcHtml;
+      document.getElementById('agent3Time').textContent = data.timing?.qc || '';
+    }
+
+    async function startConversation() {
+      fromName = document.getElementById('fromName').value;
+      fromEmail = document.getElementById('fromEmail').value;
+      subject = document.getElementById('subject').value;
+      const body = document.getElementById('startBody').value;
+
+      const startStatus = document.getElementById('startStatus');
+      startStatus.innerHTML = '<span class="spinner"></span> Running pipeline...';
 
       try {
         const res = await fetch('/simulator/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fromName: document.getElementById('fromName').value,
-            fromEmail: document.getElementById('fromEmail').value,
-            subject: document.getElementById('subject').value,
-            emailBody: document.getElementById('emailBody').value,
-          }),
+          body: JSON.stringify({ fromName, fromEmail, subject, emailBody: body }),
         });
-
         const data = await res.json();
+        if (!res.ok) { startStatus.textContent = 'Error: ' + (data.error || 'Unknown'); return; }
 
-        if (!res.ok) {
-          status.textContent = 'Error: ' + (data.error || 'Unknown error');
-          btn.disabled = false;
-          return;
-        }
+        sessionId = data.sessionId;
 
-        // Agent 1 results
-        document.getElementById('agent1Output').textContent = JSON.stringify(data.extracted, null, 2);
-        document.getElementById('agent1Time').textContent = data.timing?.extract || '';
+        // Remove start form, show conversation
+        document.getElementById('startForm').remove();
+        document.getElementById('threadSubject').textContent = subject;
+        document.getElementById('composeArea').style.display = 'block';
 
-        // Agent 2 results
-        document.getElementById('agent2Output').textContent = data.composedText || '—';
-        document.getElementById('agent2Time').textContent = data.timing?.compose || '';
+        // Add messages
+        addMessage(fromName + ' <' + fromEmail + '>', body, 'inbound');
+        addMessage('Luca', data.composedText, 'outbound');
 
-        // Agent 3 results
-        const qc = data.qcResult;
-        const badge = document.getElementById('qcBadge');
-        badge.style.display = 'inline';
-        badge.className = 'badge ' + (qc.verdict === 'pass' ? 'pass' : 'fail');
-        badge.textContent = qc.verdict.toUpperCase();
+        updateInspector(data);
+      } catch (err) {
+        startStatus.textContent = 'Error: ' + err.message;
+      }
+    }
 
-        let qcHtml = '';
-        if (qc.issues?.length) {
-          qcHtml += '<p style="font-size:0.8rem;font-weight:500;margin-bottom:4px;">Issues:</p><ul>' + qc.issues.map(i => '<li>' + i + '</li>').join('') + '</ul>';
-        }
-        if (qc.questions?.length) {
-          qcHtml += '<p style="font-size:0.8rem;font-weight:500;margin:8px 0 4px;">Questions:</p><ul>' + qc.questions.map(q => '<li>' + q + '</li>').join('') + '</ul>';
-        }
-        if (qc.suggestions?.length) {
-          qcHtml += '<p style="font-size:0.8rem;font-weight:500;margin:8px 0 4px;">Suggestions:</p><ul>' + qc.suggestions.map(s => '<li>' + s + '</li>').join('') + '</ul>';
-        }
-        if (!qcHtml) qcHtml = '<p style="font-size:0.8rem;color:#059669;">No issues found.</p>';
-        document.getElementById('agent3Output').innerHTML = qcHtml;
-        document.getElementById('agent3Time').textContent = data.timing?.qc || '';
+    async function sendReply() {
+      const body = document.getElementById('replyBody').value.trim();
+      if (!body) return;
 
-        // Final email
-        document.getElementById('finalEmail').textContent = data.composedText || '—';
+      const btn = document.getElementById('replyBtn');
+      const status = document.getElementById('replyStatus');
+      btn.disabled = true;
+      status.innerHTML = '<span class="spinner"></span> Running pipeline...';
 
-        status.textContent = 'Pipeline complete (' + (data.timing?.total || '?') + ')';
+      addMessage(fromName + ' <' + fromEmail + '>', body, 'inbound');
+      document.getElementById('replyBody').value = '';
+
+      try {
+        const res = await fetch('/simulator/reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, emailBody: body }),
+        });
+        const data = await res.json();
+        if (!res.ok) { status.textContent = 'Error: ' + (data.error || 'Unknown'); btn.disabled = false; return; }
+
+        addMessage('Luca', data.composedText, 'outbound');
+        updateInspector(data);
+        status.textContent = data.timing?.total || '';
       } catch (err) {
         status.textContent = 'Error: ' + err.message;
       }
 
       btn.disabled = false;
     }
+
+    function resetConversation() {
+      sessionId = null;
+      window.location.reload();
+    }
+
+    // Enter key sends reply
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey && document.activeElement === document.getElementById('replyBody')) {
+        e.preventDefault();
+        sendReply();
+      }
+    });
   </script>
 </body>
 </html>`);
 });
 
+// ── Simulator API ───────────────────────────────────────────────────────────
+
+interface SimSession {
+  organizerId: string;
+  organizerName: string;
+  tz: string;
+  fromName: string;
+  fromEmail: string;
+  subject: string;
+  /** Thread history — accumulated across turns */
+  threadHistory: string[];
+  /** Last Luca response (for context) */
+  lastLucaResponse: string;
+  /** Simulated proposed times for follow-ups */
+  proposedSlots: string[];
+  /** Meeting status tracking */
+  meetingStatus: string;
+}
+
+// In-memory session store (simulator only — not for production data)
+const simSessions = new Map<string, SimSession>();
+
 /**
- * Run the full 3-agent pipeline on a simulated email.
- * No real calendar events are created, no real emails are sent.
+ * Start a new simulated conversation (first email).
  */
 simulatorRoutes.post("/run", async (c) => {
   const body = await c.req.json<{
@@ -242,7 +360,6 @@ simulatorRoutes.post("/run", async (c) => {
     emailBody: string;
   }>();
 
-  // Get the organizer (first user)
   const organizer = await db.query.users.findFirst();
   if (!organizer) return c.json({ error: "No user configured" }, 500);
 
@@ -251,10 +368,8 @@ simulatorRoutes.post("/run", async (c) => {
   const totalStart = Date.now();
 
   try {
-    // ── Agent 1: Extract ──────────────────────────────────
     const extractStart = Date.now();
 
-    // Build minimal context for extraction (no real meeting)
     const userTypes = await db.query.meetingTypes.findMany({
       where: eq(meetingTypes.userId, organizer.id),
     });
@@ -286,42 +401,51 @@ simulatorRoutes.post("/run", async (c) => {
         })),
       },
     );
-
     timing.extract = `${Date.now() - extractStart}ms`;
 
-    // ── Build simulated ComposerContext ──────────────────
-    // For the simulator, we build a simple context without real calendar ops
-    const participantNames = [body.fromName || body.fromEmail.split("@")[0]];
-    const composerCtx = {
-      intent: extracted.intent,
+    // Build simulated ComposerContext with realistic slots
+    const simSlots = generateSimSlots(tz);
+    const composerCtx = buildSimComposerContext(extracted.intent, {
       meetingTitle: extracted.meeting_details.title ?? `Meeting with ${body.fromName}`,
       organizerName: organizer.name,
-      participantNames,
+      participantNames: [body.fromName || body.fromEmail.split("@")[0]],
       senderName: body.fromName,
-      // In sim mode we provide sample slots for schedule_new intent
-      ...(extracted.intent === "schedule_new" ? {
-        formattedSlots: "1. Wednesday, April 9 at 2:00 PM - 2:30 PM\n2. Thursday, April 10 at 10:00 AM - 10:30 AM\n3. Friday, April 11 at 3:00 PM - 3:30 PM",
-        pickerLink: `${env.APP_URL}/meeting/sim-test`,
-      } : {}),
-      ...(extracted.intent === "confirm_time" ? {
-        confirmedTime: "Wednesday, April 9 at 2:00 PM",
-        rescheduleLink: `${env.APP_URL}/meeting/sim-test`,
-      } : {}),
+      formattedSlots: simSlots.formatted,
       originalEmailSummary: extracted.meeting_context_summary,
-    };
+    });
 
-    // ── Agent 2: Compose ──────────────────────────────────
+    // Agent 2: Compose
+    const threadHistoryStr = `[inbound] From: ${body.fromName}\n${body.emailBody}`;
     const composeStart = Date.now();
-    const composedText = await composeEmail(extracted, composerCtx, "");
+    const composedText = await composeEmail(extracted, composerCtx, threadHistoryStr);
     timing.compose = `${Date.now() - composeStart}ms`;
 
-    // ── Agent 3: QC ───────────────────────────────────────
+    // Agent 3: QC
     const qcStart = Date.now();
-    const qcResult = await reviewEmail(composedText, "", extracted, composerCtx);
+    const qcResult = await reviewEmail(composedText, threadHistoryStr, extracted, composerCtx);
     timing.qc = `${Date.now() - qcStart}ms`;
     timing.total = `${Date.now() - totalStart}ms`;
 
+    // Create session for follow-up replies
+    const sessionId = nanoid(10);
+    simSessions.set(sessionId, {
+      organizerId: organizer.id,
+      organizerName: organizer.name,
+      tz,
+      fromName: body.fromName,
+      fromEmail: body.fromEmail,
+      subject: body.subject,
+      threadHistory: [
+        `[inbound] From: ${body.fromName}\n${body.emailBody}`,
+        `[outbound] From: Luca\n${composedText}`,
+      ],
+      lastLucaResponse: composedText,
+      proposedSlots: simSlots.raw,
+      meetingStatus: extracted.intent === "schedule_new" ? "proposed" : "draft",
+    });
+
     return c.json({
+      sessionId,
       extracted,
       composerContext: composerCtx,
       composedText,
@@ -336,3 +460,202 @@ simulatorRoutes.post("/run", async (c) => {
     }, 500);
   }
 });
+
+/**
+ * Send a follow-up reply in an existing simulated conversation.
+ * This is where we test the back-and-forth.
+ */
+simulatorRoutes.post("/reply", async (c) => {
+  const body = await c.req.json<{
+    sessionId: string;
+    emailBody: string;
+  }>();
+
+  const session = simSessions.get(body.sessionId);
+  if (!session) return c.json({ error: "Session not found — start a new conversation" }, 404);
+
+  const timing: Record<string, string> = {};
+  const totalStart = Date.now();
+
+  try {
+    // Add the inbound reply to thread history
+    session.threadHistory.push(`[inbound] From: ${session.fromName}\n${body.emailBody}`);
+    const threadHistoryStr = session.threadHistory.join("\n---\n");
+
+    // Fetch organizer context
+    const userTypes = await db.query.meetingTypes.findMany({
+      where: eq(meetingTypes.userId, session.organizerId),
+    });
+    const rules = await db.query.availabilityRules.findMany({
+      where: eq(availabilityRules.userId, session.organizerId),
+    });
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const availPref = rules
+      .filter((r) => r.isActive)
+      .map((r) => `${days[r.dayOfWeek]}: ${r.startTime} - ${r.endTime}`)
+      .join(", ");
+
+    // Agent 1: Extract with full thread context
+    const extractStart = Date.now();
+    const extracted = await extractIntent(
+      body.emailBody,
+      session.fromEmail,
+      session.fromName,
+      session.subject,
+      {
+        organizerName: session.organizerName,
+        organizerEmail: (await db.query.users.findFirst({ where: eq(users.id, session.organizerId) }))?.email ?? "",
+        organizerTimezone: session.tz,
+        meetingStatus: session.meetingStatus,
+        proposedTimes: session.proposedSlots,
+        threadHistory: threadHistoryStr,
+        availabilityPreferences: availPref || undefined,
+        userMeetingTypes: userTypes.map((t) => ({
+          id: t.id,
+          name: t.name,
+          isOnline: t.isOnline,
+          defaultDuration: t.defaultDuration,
+        })),
+      },
+    );
+    timing.extract = `${Date.now() - extractStart}ms`;
+
+    // Build context based on detected intent
+    const composerCtx = buildSimComposerContext(extracted.intent, {
+      meetingTitle: `Meeting with ${session.fromName}`,
+      organizerName: session.organizerName,
+      participantNames: [session.fromName || session.fromEmail.split("@")[0]],
+      senderName: session.fromName,
+      formattedSlots: extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times"
+        ? generateSimSlots(session.tz).formatted
+        : undefined,
+      proposedSlots: session.proposedSlots,
+      originalEmailSummary: extracted.meeting_context_summary,
+    });
+
+    // Update meeting status based on intent
+    if (extracted.intent === "confirm_time") {
+      session.meetingStatus = "confirmed";
+    } else if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times") {
+      session.meetingStatus = "proposed";
+      session.proposedSlots = generateSimSlots(session.tz).raw;
+    } else if (extracted.intent === "decline") {
+      session.meetingStatus = "cancelled";
+    }
+
+    // Agent 2: Compose with full thread history
+    const composeStart = Date.now();
+    const composedText = await composeEmail(extracted, composerCtx, threadHistoryStr);
+    timing.compose = `${Date.now() - composeStart}ms`;
+
+    // Agent 3: QC with full thread history
+    const qcStart = Date.now();
+    const qcResult = await reviewEmail(composedText, threadHistoryStr, extracted, composerCtx);
+    timing.qc = `${Date.now() - qcStart}ms`;
+    timing.total = `${Date.now() - totalStart}ms`;
+
+    // Update session
+    session.threadHistory.push(`[outbound] From: Luca\n${composedText}`);
+    session.lastLucaResponse = composedText;
+
+    return c.json({
+      extracted,
+      composerContext: composerCtx,
+      composedText,
+      qcResult,
+      timing,
+    });
+  } catch (err) {
+    console.error("Simulator reply error:", err);
+    return c.json({
+      error: err instanceof Error ? err.message : "Unknown error",
+      timing: { total: `${Date.now() - totalStart}ms` },
+    }, 500);
+  }
+});
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Generate realistic simulated time slots. */
+function generateSimSlots(tz: string): { formatted: string; raw: string[] } {
+  const now = new Date();
+  const slots: { start: Date; end: Date }[] = [];
+
+  // Generate 3 slots: tomorrow afternoon, day after morning, 3 days out afternoon
+  for (let offset = 1; offset <= 3; offset++) {
+    const day = new Date(now);
+    day.setDate(day.getDate() + offset);
+    // Skip weekends
+    if (day.getDay() === 0) day.setDate(day.getDate() + 1);
+    if (day.getDay() === 6) day.setDate(day.getDate() + 2);
+
+    const hours = offset === 2 ? 10 : 14; // Mix morning and afternoon
+    day.setHours(hours, 0, 0, 0);
+    const end = new Date(day);
+    end.setMinutes(end.getMinutes() + 30);
+    slots.push({ start: day, end });
+  }
+
+  const formatted = slots
+    .map((s, i) => `${i + 1}. ${formatSlot(s.start, s.end, tz)}`)
+    .join("\n");
+
+  const raw = slots.map(
+    (s) => formatSlot(s.start, s.end, tz),
+  );
+
+  return { formatted, raw };
+}
+
+/** Build a ComposerContext appropriate for the intent in simulation mode. */
+function buildSimComposerContext(
+  intent: string,
+  opts: {
+    meetingTitle: string;
+    organizerName: string;
+    participantNames: string[];
+    senderName: string;
+    formattedSlots?: string;
+    proposedSlots?: string[];
+    originalEmailSummary?: string;
+  },
+): ComposerContext {
+  const base: ComposerContext = {
+    intent,
+    meetingTitle: opts.meetingTitle,
+    organizerName: opts.organizerName,
+    participantNames: opts.participantNames,
+    senderName: opts.senderName,
+    originalEmailSummary: opts.originalEmailSummary,
+  };
+
+  switch (intent) {
+    case "schedule_new":
+      return {
+        ...base,
+        formattedSlots: opts.formattedSlots,
+        pickerLink: `${env.APP_URL}/meeting/sim-test`,
+      };
+    case "confirm_time":
+      return {
+        ...base,
+        // Use first proposed slot as the "confirmed" time
+        confirmedTime: opts.proposedSlots?.[0] ?? "Wednesday at 2:00 PM",
+        rescheduleLink: `${env.APP_URL}/meeting/sim-test`,
+      };
+    case "reschedule":
+    case "ask_for_more_times":
+    case "propose_alternatives":
+      return {
+        ...base,
+        formattedSlots: opts.formattedSlots,
+        pickerLink: `${env.APP_URL}/meeting/sim-test`,
+      };
+    case "decline":
+      return base;
+    case "freeform_question":
+    case "unrelated":
+    default:
+      return base;
+  }
+}
