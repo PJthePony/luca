@@ -13,6 +13,8 @@ import { settingsRoutes } from "./routes/settings.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { joinRoutes } from "./routes/join.js";
 import { loginRoutes } from "./routes/login.js";
+import { draftApprovalRoutes } from "./routes/draft-approval.js";
+import { simulatorRoutes } from "./routes/simulator.js";
 import { fontLinks, landingDarkStyles, logoSvgDark } from "./lib/styles.js";
 
 const app = new Hono();
@@ -117,6 +119,8 @@ app.route("/join", joinRoutes);
 app.route("/login", loginRoutes);
 app.route("/settings", settingsRoutes);
 app.route("/dashboard", dashboardRoutes);
+app.route("/approval", draftApprovalRoutes);
+app.route("/simulator", simulatorRoutes);
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(`Luca is running on http://localhost:${info.port}`);

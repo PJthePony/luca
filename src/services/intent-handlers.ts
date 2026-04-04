@@ -6,7 +6,7 @@ import { findAvailableSlots } from "./slot-proposer.js";
 import * as machine from "./meeting-machine.js";
 import { notifyUser } from "./notification.js";
 import { getAttendeeEmails, isVideoCallType } from "./queries.js";
-import type { ParsedEmail } from "../types/index.js";
+import type { ExtractedData, ComposerContext, IntentHandlerResult } from "../types/index.js";
 import type { GoogleTokens } from "../types/index.js";
 import { env } from "../config.js";
 
@@ -48,28 +48,28 @@ export interface IntentContext {
   tz: string;
   tokens: GoogleTokens | null;
   replyTo: string[];
-  parsed: ParsedEmail;
+  extracted: ExtractedData;
   calendarDescription: string | undefined;
   emailSubject: string;
 }
 
-// ── Intent Handlers ─────────────────────────────────────────────────────────
+// ── Intent Handlers (return ComposerContext, no email sending) ─────────────
 
-export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
-  const { meeting, thread, organizer, tz, tokens, replyTo, parsed, calendarDescription, emailSubject } = ctx;
+export async function handleScheduleNew(ctx: IntentContext): Promise<IntentHandlerResult> {
+  const { meeting, thread, organizer, tz, tokens, replyTo, extracted, calendarDescription, emailSubject } = ctx;
 
   if (!tokens) {
-    await sendThreadedReply({
-      threadId: thread.id,
-      to: [organizer.email],
-      text: `Hi ${organizer.name}, I'd love to help schedule this meeting, but I don't have access to your Google Calendar yet. Please connect it at ${env.APP_URL}/auth/google?userId=${organizer.id}\n\n- Luca`,
-    });
-    return;
+    return {
+      composerContext: { intent: "schedule_new", organizerName: organizer.name },
+      skipPipeline: true,
+      fixedMessage: `Hi ${organizer.name}, I'd love to help schedule this meeting, but I don't have access to your Google Calendar yet. Please connect it at ${env.APP_URL}/auth/google?userId=${organizer.id}\n\n- Luca`,
+      fixedTo: [organizer.email],
+    };
   }
 
   // Resolve meeting type from AI inference
-  let effectiveDuration = parsed.meeting_details.duration_minutes ?? 30;
-  const aiMeetingTypeId = parsed.meeting_details.meeting_type_id;
+  let effectiveDuration = extracted.meeting_details.duration_minutes ?? 30;
+  const aiMeetingTypeId = extracted.meeting_details.meeting_type_id;
   let matchedTypeId: string | undefined;
 
   // Get participant names for title building
@@ -78,7 +78,6 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
   });
 
   if (aiMeetingTypeId) {
-    // Look up by ID, verify ownership
     let matchedType = await db.query.meetingTypes.findFirst({
       where: and(
         eq(meetingTypes.id, aiMeetingTypeId),
@@ -86,7 +85,6 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
       ),
     });
 
-    // Fallback: if AI returned a bad ID, use the user's default meeting type
     if (!matchedType) {
       matchedType = await db.query.meetingTypes.findFirst({
         where: and(
@@ -98,11 +96,10 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
 
     if (matchedType) {
       matchedTypeId = matchedType.id;
-      if (!parsed.meeting_details.duration_minutes) {
+      if (!extracted.meeting_details.duration_minutes) {
         effectiveDuration = matchedType.defaultDuration;
       }
 
-      // Build meeting title: "Coffee for P.J. and Christina"
       const participantNames = allParticipants
         .filter((p) => p.role !== "organizer")
         .map((p) => {
@@ -158,19 +155,22 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
     organizer.id,
     meeting.id,
     effectiveDuration,
-    parsed.time_preferences,
+    extracted.time_preferences,
     10,
     matchedTypeId,
   );
 
   if (slots.length === 0) {
-    await sendThreadedReply({
-      threadId: thread.id,
-      to: replyTo,
-      bcc: [organizer.email],
-      text: `${parsed.response_draft}\n\nI wasn't able to find any available times in the next 10 days. Could you share some times that work for you?\n\nYou can also use this link to see options: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
-    });
-    return;
+    return {
+      composerContext: {
+        intent: "schedule_new",
+        meetingTitle: meeting.title ?? emailSubject,
+        organizerName: organizer.name,
+        participantNames: allParticipants.filter((p) => p.role !== "organizer").map((p) => p.name ?? p.email.split("@")[0]),
+        noSlotsMessage: `I wasn't able to find any available times in the next 10 days. Could you share some times that work for you?`,
+        pickerLink: `${env.APP_URL}/meeting/${meeting.shortId}`,
+      },
+    };
   }
 
   // Determine meeting type features
@@ -197,61 +197,71 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<void> {
     },
   );
 
-  // Format reply email
-  const timeList = proposeResult.slots
+  // Format slots for composer
+  const formattedSlots = proposeResult.slots
     .map((s, i) => `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`)
     .join("\n");
 
-  const agendaAck = parsed.agenda_items && parsed.agenda_items.length > 0
-    ? `\n\nI've noted the discussion topics for the agenda.`
-    : "";
+  const agendaAck = extracted.agenda_items && extracted.agenda_items.length > 0
+    ? "I've noted the discussion topics for the agenda."
+    : undefined;
 
   // Check for in-person location options
-  let locationNote = "";
+  let locationOptions: string | undefined;
+  let pickerLink = `${env.APP_URL}/meeting/${meeting.shortId}`;
   if (resolvedType && !resolvedType.isOnline) {
     const locations = await db.query.meetingLocations.findMany({
       where: eq(meetingLocations.meetingTypeId, resolvedType.id),
       orderBy: (loc, { asc }) => [asc(loc.sortOrder)],
     });
     if (locations.length > 0) {
-      const locList = locations.map((l) => `• ${l.name}${l.address ? ` (${l.address})` : ""}`).join("\n");
-      locationNote = `\n\nHere are some location options:\n${locList}\n\nYou can pick a time and location here: ${env.APP_URL}/meeting/${meeting.shortId}`;
-    } else if (resolvedType.defaultLocation) {
-      locationNote = `\n\nSuggested location: ${resolvedType.defaultLocation}`;
+      locationOptions = locations.map((l) => `- ${l.name}${l.address ? ` (${l.address})` : ""}`).join("\n");
     }
   }
 
-  let meetNote = "";
+  let meetNote: string | undefined;
   if (isVideoCall && proposeResult.meetLink) {
-    meetNote = `\n\nA Google Meet link will be included in the calendar invite.`;
+    meetNote = "A Google Meet link will be included in the calendar invite.";
   }
 
-  let phoneNote = "";
+  let phoneNote: string | undefined;
   if (isPhoneCall) {
-    phoneNote = `\n\nSince this is a phone call, could you share your phone number? ${organizer.name} will call you at the selected time.`;
+    phoneNote = `Since this is a phone call, could you share your phone number? ${organizer.name} will call you at the selected time.`;
   }
 
-  const pickerLink = locationNote
-    ? ""
-    : `\n\nYou can also pick a time here: ${env.APP_URL}/meeting/${meeting.shortId}`;
-
-  await sendThreadedReply({
-    threadId: thread.id,
-    to: replyTo,
-    bcc: [organizer.email],
-    text: `${parsed.response_draft}\n\nHere are some times that work:\n\n${timeList}\n\nJust reply with your preferred option, or let me know if none of these work and I'll find more times.${agendaAck}${meetNote}${phoneNote}${locationNote}${pickerLink}\n\n- Luca`,
-  });
+  return {
+    composerContext: {
+      intent: "schedule_new",
+      formattedSlots,
+      pickerLink,
+      locationOptions,
+      meetNote,
+      phoneNote,
+      agendaAck,
+      meetingTitle: meeting.title ?? emailSubject,
+      organizerName: organizer.name,
+      participantNames: allParticipants.filter((p) => p.role !== "organizer").map((p) => p.name ?? p.email.split("@")[0]),
+    },
+  };
 }
 
-export async function handleConfirmTime(ctx: IntentContext): Promise<void> {
-  const { meeting, thread, organizer, tz, tokens, replyTo, parsed } = ctx;
-  if (!tokens || !parsed.selected_time) return;
+export async function handleConfirmTime(ctx: IntentContext): Promise<IntentHandlerResult> {
+  const { meeting, thread, organizer, tz, tokens, replyTo, extracted } = ctx;
+  if (!tokens || !extracted.selected_time) {
+    return {
+      composerContext: { intent: "confirm_time" },
+      skipPipeline: true,
+      fixedMessage: "I couldn't process that confirmation. Please try again.\n\n- Luca",
+      fixedTo: replyTo,
+      fixedBcc: [organizer.email],
+    };
+  }
 
   const meetingSlots = await db.query.proposedSlots.findMany({
     where: eq(proposedSlots.meetingId, meeting.id),
   });
 
-  const selectedStart = new Date(parsed.selected_time.start);
+  const selectedStart = new Date(extracted.selected_time.start);
   const matchedSlot = meetingSlots.find(
     (s) => Math.abs(s.startTime.getTime() - selectedStart.getTime()) < 30 * 60 * 1000,
   );
@@ -260,13 +270,6 @@ export async function handleConfirmTime(ctx: IntentContext): Promise<void> {
     await machine.confirmSlot(meeting.id, matchedSlot.id, tokens);
     const confirmedTime = formatTime(matchedSlot.startTime, tz);
 
-    await sendThreadedReply({
-      threadId: thread.id,
-      to: replyTo,
-      bcc: [organizer.email],
-      text: `${parsed.response_draft}\n\nGreat, the meeting is confirmed for ${confirmedTime}. A calendar invite has been sent.\n\nIf you need to reschedule, just reply to this email or visit: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
-    });
-
     await notifyUser({
       type: "meeting_confirmed",
       userId: organizer.id,
@@ -274,19 +277,39 @@ export async function handleConfirmTime(ctx: IntentContext): Promise<void> {
       meetingShortId: meeting.shortId,
       confirmedTime,
     });
+
+    return {
+      composerContext: {
+        intent: "confirm_time",
+        confirmedTime,
+        rescheduleLink: `${env.APP_URL}/meeting/${meeting.shortId}`,
+        meetingTitle: meeting.title ?? "Meeting",
+        organizerName: organizer.name,
+      },
+    };
   } else {
-    await sendThreadedReply({
-      threadId: thread.id,
-      to: replyTo,
-      bcc: [organizer.email],
-      text: `${parsed.response_draft}\n\nI couldn't match that to one of the proposed times. Could you reply with the number (1, 2, or 3) or pick a time here: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
-    });
+    return {
+      composerContext: {
+        intent: "confirm_time_no_match",
+        pickerLink: `${env.APP_URL}/meeting/${meeting.shortId}`,
+        meetingTitle: meeting.title ?? "Meeting",
+        organizerName: organizer.name,
+      },
+    };
   }
 }
 
-export async function handleReschedule(ctx: IntentContext): Promise<void> {
-  const { meeting, thread, organizer, tz, tokens, replyTo, parsed, calendarDescription, emailSubject } = ctx;
-  if (!tokens) return;
+export async function handleReschedule(ctx: IntentContext): Promise<IntentHandlerResult> {
+  const { meeting, thread, organizer, tz, tokens, replyTo, extracted, calendarDescription, emailSubject } = ctx;
+  if (!tokens) {
+    return {
+      composerContext: { intent: "reschedule" },
+      skipPipeline: true,
+      fixedMessage: "I can't reschedule without calendar access.\n\n- Luca",
+      fixedTo: replyTo,
+      fixedBcc: [organizer.email],
+    };
+  }
 
   await machine.startRescheduling(meeting.id, tokens);
 
@@ -294,10 +317,17 @@ export async function handleReschedule(ctx: IntentContext): Promise<void> {
     organizer.id,
     meeting.id,
     meeting.durationMin,
-    parsed.time_preferences,
+    extracted.time_preferences,
     10,
     meeting.meetingTypeId,
   );
+
+  await notifyUser({
+    type: "meeting_rescheduled",
+    userId: organizer.id,
+    meetingTitle: meeting.title ?? "Meeting",
+    meetingShortId: meeting.shortId,
+  });
 
   if (newSlots.length > 0) {
     const reschedIsVideoCall = await isVideoCallType(meeting.meetingTypeId);
@@ -311,39 +341,37 @@ export async function handleReschedule(ctx: IntentContext): Promise<void> {
       { addGoogleMeet: reschedIsVideoCall, timeZone: tz },
     );
 
-    const timeList = reschedResult.slots
+    const formattedSlots = reschedResult.slots
       .map((s, i) => `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`)
       .join("\n");
 
-    await sendThreadedReply({
-      threadId: thread.id,
-      to: replyTo,
-      bcc: [organizer.email],
-      text: `${parsed.response_draft}\n\nNo problem! Here are some new times:\n\n${timeList}\n\nOr pick a time here: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
-    });
+    return {
+      composerContext: {
+        intent: "reschedule",
+        formattedSlots,
+        pickerLink: `${env.APP_URL}/meeting/${meeting.shortId}`,
+        meetingTitle: meeting.title ?? emailSubject,
+        organizerName: organizer.name,
+      },
+    };
   }
 
-  await notifyUser({
-    type: "meeting_rescheduled",
-    userId: organizer.id,
-    meetingTitle: meeting.title ?? "Meeting",
-    meetingShortId: meeting.shortId,
-  });
+  return {
+    composerContext: {
+      intent: "reschedule",
+      noSlotsMessage: "I'm having trouble finding open times. Could you share some specific days or times that work?",
+      meetingTitle: meeting.title ?? emailSubject,
+      organizerName: organizer.name,
+    },
+  };
 }
 
-export async function handleDecline(ctx: IntentContext): Promise<void> {
-  const { meeting, thread, organizer, tokens, replyTo, parsed } = ctx;
+export async function handleDecline(ctx: IntentContext): Promise<IntentHandlerResult> {
+  const { meeting, organizer, tokens } = ctx;
 
   if (tokens) {
     await machine.cancelMeeting(meeting.id, tokens);
   }
-
-  await sendThreadedReply({
-    threadId: thread.id,
-    to: replyTo,
-    bcc: [organizer.email],
-    text: `${parsed.response_draft}\n\n- Luca`,
-  });
 
   await notifyUser({
     type: "meeting_cancelled",
@@ -351,11 +379,27 @@ export async function handleDecline(ctx: IntentContext): Promise<void> {
     meetingTitle: meeting.title ?? "Meeting",
     meetingShortId: meeting.shortId,
   });
+
+  return {
+    composerContext: {
+      intent: "decline",
+      meetingTitle: meeting.title ?? "Meeting",
+      organizerName: organizer.name,
+    },
+  };
 }
 
-export async function handleAskForMoreTimes(ctx: IntentContext): Promise<void> {
-  const { meeting, thread, organizer, tz, tokens, replyTo, parsed, calendarDescription, emailSubject } = ctx;
-  if (!tokens) return;
+export async function handleAskForMoreTimes(ctx: IntentContext): Promise<IntentHandlerResult> {
+  const { meeting, thread, organizer, tz, tokens, replyTo, extracted, calendarDescription, emailSubject } = ctx;
+  if (!tokens) {
+    return {
+      composerContext: { intent: "ask_for_more_times" },
+      skipPipeline: true,
+      fixedMessage: "I can't find more times without calendar access.\n\n- Luca",
+      fixedTo: replyTo,
+      fixedBcc: [organizer.email],
+    };
+  }
 
   // If currently proposed, start rescheduling first
   if (meeting.status === "proposed") {
@@ -366,7 +410,7 @@ export async function handleAskForMoreTimes(ctx: IntentContext): Promise<void> {
     organizer.id,
     meeting.id,
     meeting.durationMin,
-    parsed.time_preferences,
+    extracted.time_preferences,
     14,
     meeting.meetingTypeId,
   );
@@ -383,33 +427,39 @@ export async function handleAskForMoreTimes(ctx: IntentContext): Promise<void> {
       { addGoogleMeet: altIsVideoCall, timeZone: tz },
     );
 
-    const timeList = altResult.slots
+    const formattedSlots = altResult.slots
       .map((s, i) => `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`)
       .join("\n");
 
-    await sendThreadedReply({
-      threadId: thread.id,
-      to: replyTo,
-      bcc: [organizer.email],
-      text: `${parsed.response_draft}\n\nHere are some more options:\n\n${timeList}\n\nOr pick a time here: ${env.APP_URL}/meeting/${meeting.shortId}\n\n- Luca`,
-    });
-  } else {
-    await sendThreadedReply({
-      threadId: thread.id,
-      to: replyTo,
-      bcc: [organizer.email],
-      text: `${parsed.response_draft}\n\nI'm having trouble finding open times in the next two weeks. Could you share some specific days or times that work for you?\n\n- Luca`,
-    });
+    return {
+      composerContext: {
+        intent: "ask_for_more_times",
+        formattedSlots,
+        pickerLink: `${env.APP_URL}/meeting/${meeting.shortId}`,
+        meetingTitle: meeting.title ?? emailSubject,
+        organizerName: organizer.name,
+      },
+    };
   }
+
+  return {
+    composerContext: {
+      intent: "ask_for_more_times",
+      noSlotsMessage: "I'm having trouble finding open times in the next two weeks. Could you share some specific days or times that work for you?",
+      meetingTitle: meeting.title ?? emailSubject,
+      organizerName: organizer.name,
+    },
+  };
 }
 
-export async function handleFreeformOrUnrelated(ctx: IntentContext, senderEmail: string): Promise<void> {
-  const { thread, organizer, parsed } = ctx;
-
-  await sendThreadedReply({
-    threadId: thread.id,
-    to: [senderEmail],
-    bcc: [organizer.email],
-    text: `${parsed.response_draft}\n\n- Luca`,
-  });
+export async function handleFreeformOrUnrelated(ctx: IntentContext, senderEmail: string): Promise<IntentHandlerResult> {
+  return {
+    composerContext: {
+      intent: ctx.extracted.intent,
+      meetingTitle: ctx.meeting.title ?? "Meeting",
+      organizerName: ctx.organizer.name,
+      senderName: senderEmail,
+      originalEmailSummary: ctx.extracted.meeting_context_summary,
+    },
+  };
 }

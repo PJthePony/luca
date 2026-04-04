@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { emailMessages, meetings, users } from "../db/schema.js";
+import { emailMessages, emailThreads, meetings, users } from "../db/schema.js";
 import { parseInboundWebhook, sendEmail } from "../lib/mailgun.js";
 import { resolveThread, isResolveFailure } from "../services/thread-resolver.js";
-import { parseInboundEmail } from "../services/ai-parser.js";
+import { extractInboundEmail, getThreadHistory } from "../services/ai-parser.js";
 import { getAttendeeEmails } from "../services/queries.js";
 import {
   handleScheduleNew,
@@ -16,9 +16,12 @@ import {
   buildCalendarDescription,
 } from "../services/intent-handlers.js";
 import type { IntentContext } from "../services/intent-handlers.js";
+import { composeEmail, reviewEmail } from "../services/ai-pipeline.js";
+import { createDraft, updateDraftWithQC } from "../services/draft-manager.js";
+import { sendThreadedReply } from "../services/email.js";
 import { EmailDirection } from "../types/index.js";
-import type { GoogleTokens } from "../types/index.js";
-import { notifyUser } from "../services/notification.js";
+import type { GoogleTokens, IntentHandlerResult } from "../types/index.js";
+import { notifyUser, notifyDraftReady } from "../services/notification.js";
 import { env } from "../config.js";
 
 export const webhookRoutes = new Hono();
@@ -35,7 +38,7 @@ webhookRoutes.post("/inbound", async (c) => {
   try {
     const email = parseInboundWebhook(body as Record<string, unknown>);
 
-    // ── Route by recipient address ───────────────────────────────────────
+    // ── Route by recipient address ────��──────────────────────────────────
     const allRecipients = [...email.to, ...email.cc].map((a) => a.toLowerCase());
     const tessioAddr = `tessio@${env.MAILGUN_DOMAIN}`;
     const lucaAddr = `luca@${env.MAILGUN_DOMAIN}`;
@@ -59,7 +62,7 @@ webhookRoutes.post("/inbound", async (c) => {
       return c.json({ status: "unknown_recipient" });
     }
 
-    // ── Luca: scheduling flow ────────────────────────────────────────────
+    // ── Luca: scheduling flow ────────────��───────────────────────────────
 
     // Idempotency: skip if we've already processed this message
     if (email.messageId) {
@@ -129,8 +132,10 @@ webhookRoutes.post("/inbound", async (c) => {
     // Store the inbound message
     await storeInboundMessage(email, thread.id, body as Record<string, unknown>);
 
-    // Parse the email with Claude
-    const parsed = await parseInboundEmail(
+    // ── NEW 3-AGENT PIPELINE ────────────────────────────────────────────
+
+    // Agent 1: Extract structured data (no email prose)
+    const { extracted, threadHistory } = await extractInboundEmail(
       email.strippedText || email.bodyPlain,
       email.from,
       email.fromName,
@@ -140,15 +145,15 @@ webhookRoutes.post("/inbound", async (c) => {
     );
 
     // Update meeting with context summary and agenda items
-    await updateMeetingContext(meeting, parsed);
+    await updateMeetingContext(meeting, extracted);
 
     // Build calendar event description from context + agenda
     const updatedAgenda = [
       ...((meeting.agenda as string[]) ?? []),
-      ...(parsed.agenda_items ?? []),
+      ...(extracted.agenda_items ?? []),
     ];
     const calendarDescription = buildCalendarDescription(
-      meeting.notes ?? parsed.meeting_context_summary,
+      meeting.notes ?? extracted.meeting_context_summary,
       updatedAgenda,
     );
 
@@ -170,36 +175,101 @@ webhookRoutes.post("/inbound", async (c) => {
       tz,
       tokens,
       replyTo,
-      parsed,
+      extracted,
       calendarDescription,
       emailSubject: email.subject,
     };
 
-    // Dispatch to intent handler
-    switch (parsed.intent) {
+    // Dispatch to intent handler (state machine runs, returns ComposerContext)
+    let result: IntentHandlerResult;
+    switch (extracted.intent) {
       case "schedule_new":
-        await handleScheduleNew(ctx);
+        result = await handleScheduleNew(ctx);
         break;
       case "confirm_time":
-        await handleConfirmTime(ctx);
+        result = await handleConfirmTime(ctx);
         break;
       case "reschedule":
-        await handleReschedule(ctx);
+        result = await handleReschedule(ctx);
         break;
       case "decline":
-        await handleDecline(ctx);
+        result = await handleDecline(ctx);
         break;
       case "ask_for_more_times":
       case "propose_alternatives":
-        await handleAskForMoreTimes(ctx);
+        result = await handleAskForMoreTimes(ctx);
         break;
       case "freeform_question":
       case "unrelated":
-        await handleFreeformOrUnrelated(ctx, email.from);
+        result = await handleFreeformOrUnrelated(ctx, email.from);
         break;
+      default:
+        result = await handleFreeformOrUnrelated(ctx, email.from);
     }
 
-    return c.json({ status: "processed", intent: parsed.intent });
+    // Handle fixed system messages (no pipeline needed)
+    if (result.skipPipeline && result.fixedMessage) {
+      await sendThreadedReply({
+        threadId: thread.id,
+        to: result.fixedTo ?? replyTo,
+        bcc: result.fixedBcc,
+        text: result.fixedMessage,
+      });
+      return c.json({ status: "processed", intent: extracted.intent, pipeline: "skipped" });
+    }
+
+    // Agent 2: Compose email
+    const composedText = await composeEmail(extracted, result.composerContext, threadHistory);
+
+    // Build email subject
+    const emailSubject2 = thread.subject.startsWith("Re:")
+      ? thread.subject
+      : `Re: ${thread.subject}`;
+
+    // Create draft in DB
+    const draft = await createDraft({
+      meetingId: meeting.id,
+      threadId: thread.id,
+      intent: extracted.intent,
+      toEmails: replyTo,
+      bccEmails: [organizer.email],
+      subject: emailSubject2,
+      composedText,
+      extractedData: extracted,
+      composerOutput: result.composerContext,
+    });
+
+    // Agent 3: QC review
+    const qcResult = await reviewEmail(
+      composedText,
+      threadHistory,
+      extracted,
+      result.composerContext,
+    );
+
+    // Update draft with QC results
+    const draftStatus = qcResult.verdict === "pass" ? "pending_approval" : "pending_approval";
+    await updateDraftWithQC(draft.id, qcResult, draftStatus);
+
+    // Notify P.J. via iMessage
+    await notifyDraftReady({
+      type: qcResult.verdict === "pass" ? "draft_ready" : "draft_flagged",
+      userId: organizer.id,
+      meetingTitle: meeting.title ?? email.subject,
+      shortCode: draft.shortCode,
+      composedText,
+      recipients: replyTo,
+      issues: qcResult.issues,
+      questions: qcResult.questions,
+      suggestions: qcResult.suggestions,
+    });
+
+    return c.json({
+      status: "draft_pending",
+      intent: extracted.intent,
+      shortCode: draft.shortCode,
+      qcVerdict: qcResult.verdict,
+    });
   } catch (err) {
     console.error("=== WEBHOOK ERROR ===");
     console.error("Error:", err);
@@ -218,7 +288,6 @@ webhookRoutes.post("/inbound", async (c) => {
       );
 
       if (isOAuthError) {
-        // Mark meeting for automatic retry after reconnect
         if (resolvedMeetingId) {
           await db
             .update(meetings)
@@ -226,7 +295,6 @@ webhookRoutes.post("/inbound", async (c) => {
             .where(eq(meetings.id, resolvedMeetingId));
         }
 
-        // Notify organizer via iMessage
         if (resolvedOrganizerId && resolvedMeetingId) {
           const failedMeeting = await db.query.meetings.findFirst({
             where: eq(meetings.id, resolvedMeetingId),
@@ -270,7 +338,6 @@ async function forwardToTessio(
 ) {
   const tessioUrl = `${env.SUPABASE_URL}/functions/v1/email-to-task`;
 
-  // Rebuild the form data to forward to the Edge Function
   const formData = new FormData();
   for (const [key, value] of Object.entries(body)) {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -292,7 +359,6 @@ async function forwardToTessio(
   } catch (err) {
     console.error("Failed to forward to Tessio:", err);
 
-    // Parse sender from body so we can reply with an error
     const email = parseInboundWebhook(body);
     await sendEmail({
       to: [email.from],
@@ -311,8 +377,6 @@ async function storeInboundMessage(
   threadId: string,
   body: Record<string, unknown>,
 ) {
-  // Sanitize body for jsonb: Hono's parseBody() can return File objects
-  // which aren't JSON-serializable and crash Drizzle's value mapper.
   const sanitizedPayload: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -342,24 +406,23 @@ async function storeInboundMessage(
 /** Update meeting with context summary, agenda items, and phone number from AI parsing. */
 async function updateMeetingContext(
   meeting: typeof meetings.$inferSelect,
-  parsed: { meeting_context_summary?: string; agenda_items?: string[]; phone_number?: string },
+  extracted: { meeting_context_summary?: string; agenda_items?: string[]; phone_number?: string },
 ) {
   const meetingUpdates: Record<string, unknown> = { updatedAt: new Date() };
 
-  if (parsed.meeting_context_summary && !meeting.notes) {
-    meetingUpdates.notes = parsed.meeting_context_summary;
+  if (extracted.meeting_context_summary && !meeting.notes) {
+    meetingUpdates.notes = extracted.meeting_context_summary;
   }
 
-  // Append phone number to the meeting notes so it appears in the calendar description
-  if (parsed.phone_number) {
-    const phoneNote = `Phone: ${parsed.phone_number}`;
+  if (extracted.phone_number) {
+    const phoneNote = `Phone: ${extracted.phone_number}`;
     const currentNotes = (meetingUpdates.notes as string) ?? meeting.notes ?? "";
     meetingUpdates.notes = currentNotes ? `${currentNotes}\n\n${phoneNote}` : phoneNote;
   }
 
-  if (parsed.agenda_items && parsed.agenda_items.length > 0) {
+  if (extracted.agenda_items && extracted.agenda_items.length > 0) {
     const existingAgenda = (meeting.agenda as string[]) ?? [];
-    const newItems = parsed.agenda_items.filter(
+    const newItems = extracted.agenda_items.filter(
       (item) => !existingAgenda.some((existing) => existing.toLowerCase() === item.toLowerCase()),
     );
     if (newItems.length > 0) {

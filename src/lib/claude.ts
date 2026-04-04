@@ -130,7 +130,7 @@ export interface UserMeetingType {
   defaultDuration: number;
 }
 
-interface ParseContext {
+export interface ParseContext {
   organizerName: string;
   organizerEmail: string;
   organizerTimezone?: string;

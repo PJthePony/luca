@@ -78,6 +78,13 @@
       "when": 1774899829005,
       "tag": "0010_freezing_diamondback",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1775335038581,
+      "tag": "0011_majestic_amphibian",
+      "breakpoints": true
     }
   ]
 }

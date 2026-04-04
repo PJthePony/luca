@@ -251,6 +251,43 @@ export const emailThreads = pgTable(
   (table) => [index("idx_email_threads_meeting").on(table.meetingId)],
 );
 
+// ── Email Drafts ────────────────────────────────────────────────────────
+
+export const emailDrafts = pgTable(
+  "email_drafts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    meetingId: uuid("meeting_id")
+      .notNull()
+      .references(() => meetings.id),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => emailThreads.id),
+    shortCode: text("short_code").notNull().unique(),
+    intent: text("intent").notNull(),
+    toEmails: text("to_emails").array().notNull(),
+    bccEmails: text("bcc_emails").array(),
+    subject: text("subject").notNull(),
+    composedText: text("composed_text").notNull(),
+    extractedData: jsonb("extracted_data"),
+    composerOutput: jsonb("composer_output"),
+    qcResult: jsonb("qc_result"),
+    status: text("status").notNull().default("pending_qc"), // pending_qc | pending_approval | approved | sent | rejected | edited
+    editedText: text("edited_text"),
+    isSimulated: boolean("is_simulated").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("idx_email_drafts_meeting").on(table.meetingId),
+    index("idx_email_drafts_status").on(table.status),
+    uniqueIndex("idx_email_drafts_short_code").on(table.shortCode),
+  ],
+);
+
 // ── Email Messages ───────────────────────────────────────────────────────────
 
 export const emailMessages = pgTable(

@@ -8,7 +8,11 @@ export type NotificationType =
   | "meeting_confirmed"
   | "meeting_rescheduled"
   | "meeting_cancelled"
-  | "google_token_expired";
+  | "google_token_expired"
+  | "draft_ready"
+  | "draft_flagged"
+  | "draft_sent"
+  | "draft_rejected";
 
 interface NotificationPayload {
   type: NotificationType;
@@ -16,6 +20,18 @@ interface NotificationPayload {
   meetingTitle: string;
   meetingShortId: string;
   confirmedTime?: string;
+}
+
+interface DraftNotificationPayload {
+  type: "draft_ready" | "draft_flagged";
+  userId: string;
+  meetingTitle: string;
+  shortCode: string;
+  composedText: string;
+  recipients: string[];
+  issues?: string[];
+  questions?: string[];
+  suggestions?: string[];
 }
 
 export async function notifyUser(payload: NotificationPayload): Promise<void> {
@@ -27,10 +43,20 @@ export async function notifyUser(payload: NotificationPayload): Promise<void> {
 
   const message = formatMessage(payload);
 
-  // Send iMessage if the user has it configured
   if (user.imessageId) {
     await sendIMessage(user.imessageId, message);
   }
+}
+
+export async function notifyDraftReady(payload: DraftNotificationPayload): Promise<void> {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, payload.userId),
+  });
+
+  if (!user?.imessageId) return;
+
+  const message = formatDraftMessage(payload);
+  await sendIMessage(user.imessageId, message);
 }
 
 function formatMessage(payload: NotificationPayload): string {
@@ -45,5 +71,49 @@ function formatMessage(payload: NotificationPayload): string {
       return `Your meeting "${payload.meetingTitle}" has been cancelled.`;
     case "google_token_expired":
       return `Luca's connection to your Google Calendar has expired. A scheduling request for "${payload.meetingTitle}" couldn't be processed. Reconnect at ${env.APP_URL}/settings — Luca will retry automatically.`;
+    default:
+      return "";
   }
+}
+
+function formatDraftMessage(payload: DraftNotificationPayload): string {
+  const recipientList = payload.recipients.join(", ");
+  // Truncate draft preview to keep iMessage readable
+  const preview = payload.composedText.length > 500
+    ? payload.composedText.slice(0, 500) + "..."
+    : payload.composedText;
+
+  if (payload.type === "draft_flagged") {
+    const parts: string[] = [
+      `Luca's QC flagged issues with a draft for "${payload.meetingTitle}" to ${recipientList}:`,
+    ];
+
+    if (payload.issues && payload.issues.length > 0) {
+      parts.push(`\nIssues:\n${payload.issues.map((i) => `- ${i}`).join("\n")}`);
+    }
+
+    if (payload.questions && payload.questions.length > 0) {
+      parts.push(`\nQuestions:\n${payload.questions.map((q) => `- ${q}`).join("\n")}`);
+    }
+
+    if (payload.suggestions && payload.suggestions.length > 0) {
+      parts.push(`\nSuggestions:\n${payload.suggestions.map((s) => `- ${s}`).join("\n")}`);
+    }
+
+    parts.push(`\n---\n${preview}\n---`);
+    parts.push(`\nReply: "send ${payload.shortCode}" to send anyway`);
+    parts.push(`Reply: "reject ${payload.shortCode}" to discard`);
+    parts.push(`Reply: "edit ${payload.shortCode}: [your version]" to modify and send`);
+
+    return parts.join("\n");
+  }
+
+  // draft_ready (QC passed)
+  return [
+    `Luca drafted a reply for "${payload.meetingTitle}" to ${recipientList}:`,
+    `\n---\n${preview}\n---`,
+    `\nReply: "send ${payload.shortCode}" to approve`,
+    `Reply: "reject ${payload.shortCode}" to discard`,
+    `Reply: "edit ${payload.shortCode}: [your version]" to modify and send`,
+  ].join("\n");
 }

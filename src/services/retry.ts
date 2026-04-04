@@ -1,13 +1,17 @@
 import { eq, and, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { meetings, emailThreads, emailMessages, proposedSlots, users } from "../db/schema.js";
-import { parseInboundEmail } from "./ai-parser.js";
+import { extractInboundEmail } from "./ai-parser.js";
 import { getAttendeeEmails } from "./queries.js";
 import {
   handleScheduleNew,
   buildCalendarDescription,
 } from "./intent-handlers.js";
 import type { IntentContext } from "./intent-handlers.js";
+import { composeEmail, reviewEmail } from "./ai-pipeline.js";
+import { createDraft, updateDraftWithQC } from "./draft-manager.js";
+import { notifyDraftReady } from "./notification.js";
+import { sendThreadedReply } from "./email.js";
 import type { GoogleTokens } from "../types/index.js";
 import { EmailDirection } from "../types/index.js";
 
@@ -83,6 +87,7 @@ export async function findRetryableMeetings(userId: string): Promise<RetryableMe
 
 /**
  * Retry a single meeting by ID. Called after user approval.
+ * Uses the new 3-agent pipeline: Extract → Handle → Compose → QC → Draft.
  */
 export async function retryMeetingById(meetingId: string, userId: string): Promise<boolean> {
   const organizer = await db.query.users.findFirst({
@@ -118,7 +123,8 @@ export async function retryMeetingById(meetingId: string, userId: string): Promi
     .set({ status: "draft", updatedAt: new Date() })
     .where(eq(meetings.id, meeting.id));
 
-  const parsed = await parseInboundEmail(
+  // Agent 1: Extract
+  const { extracted, threadHistory } = await extractInboundEmail(
     latestEmail.bodyText ?? "",
     latestEmail.fromEmail,
     latestEmail.fromName ?? "",
@@ -132,10 +138,10 @@ export async function retryMeetingById(meetingId: string, userId: string): Promi
 
   const updatedAgenda = [
     ...((meeting.agenda as string[]) ?? []),
-    ...(parsed.agenda_items ?? []),
+    ...(extracted.agenda_items ?? []),
   ];
   const calendarDescription = buildCalendarDescription(
-    meeting.notes ?? parsed.meeting_context_summary,
+    meeting.notes ?? extracted.meeting_context_summary,
     updatedAgenda,
   );
 
@@ -152,13 +158,62 @@ export async function retryMeetingById(meetingId: string, userId: string): Promi
     tz,
     tokens,
     replyTo,
-    parsed,
+    extracted,
     calendarDescription,
     emailSubject: thread.subject,
   };
 
-  await handleScheduleNew(ctx);
-  console.log(`Retried meeting ${meeting.shortId} successfully`);
+  // Intent handler (state machine runs, returns ComposerContext)
+  const result = await handleScheduleNew(ctx);
+
+  if (result.skipPipeline && result.fixedMessage) {
+    await sendThreadedReply({
+      threadId: thread.id,
+      to: result.fixedTo ?? replyTo,
+      bcc: result.fixedBcc,
+      text: result.fixedMessage,
+    });
+    return true;
+  }
+
+  // Agent 2: Compose
+  const composedText = await composeEmail(extracted, result.composerContext, threadHistory);
+
+  const emailSubject = thread.subject.startsWith("Re:")
+    ? thread.subject
+    : `Re: ${thread.subject}`;
+
+  // Create draft
+  const draft = await createDraft({
+    meetingId: meeting.id,
+    threadId: thread.id,
+    intent: extracted.intent,
+    toEmails: replyTo,
+    bccEmails: [organizer.email],
+    subject: emailSubject,
+    composedText,
+    extractedData: extracted,
+    composerOutput: result.composerContext,
+  });
+
+  // Agent 3: QC
+  const qcResult = await reviewEmail(composedText, threadHistory, extracted, result.composerContext);
+  await updateDraftWithQC(draft.id, qcResult, "pending_approval");
+
+  // Notify P.J.
+  await notifyDraftReady({
+    type: qcResult.verdict === "pass" ? "draft_ready" : "draft_flagged",
+    userId: organizer.id,
+    meetingTitle: meeting.title ?? thread.subject,
+    shortCode: draft.shortCode,
+    composedText,
+    recipients: replyTo,
+    issues: qcResult.issues,
+    questions: qcResult.questions,
+    suggestions: qcResult.suggestions,
+  });
+
+  console.log(`Retried meeting ${meeting.shortId} — draft ${draft.shortCode} pending approval`);
   return true;
 }
 
