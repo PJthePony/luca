@@ -447,7 +447,7 @@ simulatorRoutes.post("/run", async (c) => {
     timing.extract = `${Date.now() - extractStart}ms`;
 
     // Build simulated ComposerContext with realistic slots
-    const simSlots = generateSimSlots(tz);
+    const simSlots = generateSimSlots(tz, extracted.time_preferences);
     const composerCtx = buildSimComposerContext(extracted.intent, {
       meetingTitle: extracted.meeting_details.title ?? `Meeting with ${body.fromName}`,
       organizerName: organizer.name,
@@ -567,7 +567,7 @@ simulatorRoutes.post("/reply", async (c) => {
       participantNames: [session.fromName || session.fromEmail.split("@")[0]],
       senderName: session.fromName,
       formattedSlots: extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times"
-        ? generateSimSlots(session.tz).formatted
+        ? generateSimSlots(session.tz, extracted.time_preferences).formatted
         : undefined,
       proposedSlots: session.proposedSlots,
       originalEmailSummary: extracted.meeting_context_summary,
@@ -578,7 +578,7 @@ simulatorRoutes.post("/reply", async (c) => {
       session.meetingStatus = "confirmed";
     } else if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times") {
       session.meetingStatus = "proposed";
-      session.proposedSlots = generateSimSlots(session.tz).raw;
+      session.proposedSlots = generateSimSlots(session.tz, extracted.time_preferences).raw;
     } else if (extracted.intent === "decline") {
       session.meetingStatus = "cancelled";
     }
@@ -611,31 +611,159 @@ simulatorRoutes.post("/reply", async (c) => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Generate realistic simulated time slots. */
-function generateSimSlots(tz: string): { formatted: string; raw: string[] } {
+/**
+ * Convert a local date/time in a given timezone to a UTC Date.
+ * Mirrors the same function in slot-proposer.ts.
+ */
+function localTimeToUtc(year: number, month: number, day: number, hour: number, minute: number, tz: string): Date {
+  const rough = new Date(Date.UTC(year, month, day, hour, minute, 0, 0));
+  const utcStr = rough.toLocaleString("en-US", { timeZone: "UTC" });
+  const tzStr = rough.toLocaleString("en-US", { timeZone: tz });
+  const offsetMs = new Date(tzStr).getTime() - new Date(utcStr).getTime();
+  return new Date(rough.getTime() - offsetMs);
+}
+
+/**
+ * Get the local date components for a UTC date in a given timezone.
+ */
+function getLocalDateParts(utcDate: Date, tz: string): { year: number; month: number; day: number; dayOfWeek: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  }).formatToParts(utcDate);
+
+  const year = parseInt(parts.find(p => p.type === "year")!.value);
+  const month = parseInt(parts.find(p => p.type === "month")!.value) - 1;
+  const day = parseInt(parts.find(p => p.type === "day")!.value);
+  const weekday = parts.find(p => p.type === "weekday")!.value;
+  const dowMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+  return { year, month, day, dayOfWeek: dowMap[weekday] ?? 0 };
+}
+
+/** Generate realistic simulated time slots that respect extracted time preferences. */
+function generateSimSlots(tz: string, timePreferences?: import("../types/index.js").TimePreference[]): { formatted: string; raw: string[] } {
   const now = new Date();
-  const slots: { start: Date; end: Date }[] = [];
+  const prefs = timePreferences ?? [];
 
-  // Generate 3 slots: tomorrow afternoon, day after morning, 3 days out afternoon
-  for (let offset = 1; offset <= 3; offset++) {
-    const day = new Date(now);
-    day.setDate(day.getDate() + offset);
+  // Generate candidate slots across 14 days (enough to find good options)
+  const candidates: { start: Date; end: Date; score: number }[] = [];
+  const durationMs = 30 * 60 * 1000;
+
+  // Get "tomorrow" in the organizer's timezone
+  const todayParts = getLocalDateParts(now, tz);
+  const tomorrowBase = new Date(todayParts.year, todayParts.month, todayParts.day + 1);
+
+  for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+    const localDate = new Date(tomorrowBase);
+    localDate.setDate(localDate.getDate() + dayOffset);
+
+    const year = localDate.getFullYear();
+    const month = localDate.getMonth();
+    const day = localDate.getDate();
+
+    // Compute day-of-week in organizer's timezone
+    const dayStartUtc = localTimeToUtc(year, month, day, 9, 0, tz);
+    const { dayOfWeek } = getLocalDateParts(dayStartUtc, tz);
+
     // Skip weekends
-    if (day.getDay() === 0) day.setDate(day.getDate() + 1);
-    if (day.getDay() === 6) day.setDate(day.getDate() + 2);
+    if (dayOfWeek === 0 || dayOfWeek === 6) continue;
 
-    const hours = offset === 2 ? 10 : 14; // Mix morning and afternoon
-    day.setHours(hours, 0, 0, 0);
-    const end = new Date(day);
-    end.setMinutes(end.getMinutes() + 30);
-    slots.push({ start: day, end });
+    // Generate slots at 10 AM, 11 AM, 1 PM, 2 PM, 3 PM, 4 PM local time
+    const hours = [10, 11, 13, 14, 15, 16];
+    for (const h of hours) {
+      const start = localTimeToUtc(year, month, day, h, 0, tz);
+      const end = new Date(start.getTime() + durationMs);
+
+      // Skip slots in the past
+      if (start <= now) continue;
+
+      let score = 100;
+
+      // Score based on time preferences
+      for (const pref of prefs) {
+        // ISO date window matching
+        if (pref.start && pref.end) {
+          const prefStart = new Date(pref.start);
+          const prefEnd = new Date(pref.end);
+          const overlaps = start < prefEnd && end > prefStart;
+
+          if (pref.type === "prefer" && overlaps) score += 50;
+          if (pref.type === "available" && overlaps) score += 30;
+          if (pref.type === "avoid" && overlaps) score -= 100;
+          if (pref.type === "unavailable" && overlaps) score -= 200;
+        }
+
+        // Day-of-week matching (when no ISO dates)
+        if (pref.dayOfWeek !== undefined && !pref.start) {
+          if (pref.type === "prefer" && dayOfWeek === pref.dayOfWeek) score += 40;
+          if (pref.type === "available" && dayOfWeek === pref.dayOfWeek) score += 25;
+          if (pref.type === "avoid" && dayOfWeek === pref.dayOfWeek) score -= 80;
+          if (pref.type === "unavailable" && dayOfWeek === pref.dayOfWeek) score -= 150;
+        }
+
+        // Time-of-day matching (when no ISO dates)
+        if (pref.timeOfDayStart && pref.timeOfDayEnd && !pref.start) {
+          const [sh, sm] = pref.timeOfDayStart.split(":").map(Number);
+          const [eh, em] = pref.timeOfDayEnd.split(":").map(Number);
+          const slotMinutes = h * 60;
+          const inRange = slotMinutes >= sh * 60 + sm && slotMinutes < eh * 60 + em;
+
+          if (pref.type === "prefer" && inRange) score += 40;
+          if (pref.type === "available" && inRange) score += 25;
+          if (pref.type === "avoid" && inRange) score -= 100;
+          if (pref.type === "unavailable" && inRange) score -= 200;
+        }
+      }
+
+      // Prefer mid-day times
+      if (h >= 10 && h <= 14) score += 5;
+      // Prefer sooner
+      score += Math.max(0, 3 - Math.floor(dayOffset / 2));
+
+      candidates.push({ start, end, score });
+    }
   }
 
-  const formatted = slots
+  // Hard-filter: remove slots with negative scores (unavailable/avoid)
+  let viable = candidates.filter(c => c.score > 0);
+  if (viable.length === 0) viable = candidates; // fallback if filtering killed everything
+
+  // Sort by score descending
+  viable.sort((a, b) => b.score - a.score);
+
+  // Pick top 3 from different days for diversity
+  const picked: { start: Date; end: Date }[] = [];
+  const usedDays = new Set<string>();
+  for (const slot of viable) {
+    if (picked.length >= 3) break;
+    const dateKey = slot.start.toLocaleDateString("en-US", { timeZone: tz });
+    // Allow max 1 slot per day for diversity, unless we can't fill 3
+    if (usedDays.has(dateKey) && picked.length < 2) continue;
+    if (!usedDays.has(dateKey) || picked.length >= 2) {
+      picked.push({ start: slot.start, end: slot.end });
+      usedDays.add(dateKey);
+    }
+  }
+
+  // Backfill if we still don't have 3
+  if (picked.length < 3) {
+    for (const slot of viable) {
+      if (picked.length >= 3) break;
+      if (!picked.some(p => p.start.getTime() === slot.start.getTime())) {
+        picked.push({ start: slot.start, end: slot.end });
+      }
+    }
+  }
+
+  const formatted = picked
     .map((s, i) => `${i + 1}. ${formatSlot(s.start, s.end, tz)}`)
     .join("\n");
 
-  const raw = slots.map(
+  const raw = picked.map(
     (s) => formatSlot(s.start, s.end, tz),
   );
 
