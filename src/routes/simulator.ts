@@ -5,7 +5,7 @@ import { meetings, emailThreads, emailMessages, participants, users, meetingType
 import { extractIntent, runComposeQCLoop } from "../services/ai-pipeline.js";
 import type { PipelineResult } from "../services/ai-pipeline.js";
 import { formatSlot } from "../services/intent-handlers.js";
-import type { ComposerContext } from "../types/index.js";
+import type { ComposerContext, TimePreference } from "../types/index.js";
 import { baseStyles, fontLinks, logoSvg } from "../lib/styles.js";
 import { env } from "../config.js";
 import { nanoid } from "nanoid";
@@ -44,11 +44,13 @@ simulatorRoutes.get("/", async (c) => {
     .thread-empty { color: var(--nxb-color-text-muted); font-size: 0.85rem; text-align: center; padding: 40px 0; }
 
     .msg { margin-bottom: 12px; border-radius: 8px; padding: 12px; font-size: 0.85rem; }
+    .msg.organizer { background: #f0fdf4; border: 1px solid #bbf7d0; }
     .msg.inbound { background: #f0f4f8; border: 1px solid #e2e8f0; }
     .msg.outbound { background: #fffbf5; border: 1px solid #fed7aa; }
     .msg-header { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 0.75rem; color: var(--nxb-color-text-secondary); }
     .msg-from { font-weight: 600; }
     .msg-label { font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
+    .msg-label.org { background: #dcfce7; color: #166534; }
     .msg-label.in { background: #e0e7ff; color: #3730a3; }
     .msg-label.out { background: #fff7ed; color: #c2410c; }
     .msg-body { white-space: pre-wrap; line-height: 1.5; }
@@ -86,6 +88,7 @@ simulatorRoutes.get("/", async (c) => {
     .start-form .form-row.full { grid-template-columns: 1fr; }
     .form-group label { display: block; font-size: 0.78rem; font-weight: 500; color: var(--nxb-color-text-secondary); margin-bottom: 3px; }
     .form-group input, .form-group textarea { width: 100%; padding: 7px 10px; border: 1px solid var(--nxb-color-border); border-radius: 6px; font-size: 0.85rem; }
+    .form-group input[readonly] { background: #f8fafc; color: var(--nxb-color-text-secondary); }
     .form-group textarea { min-height: 80px; resize: vertical; }
 
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #e2e8f0; border-top-color: var(--nxb-color-primary); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
@@ -110,41 +113,51 @@ simulatorRoutes.get("/", async (c) => {
         </h2>
 
         <div class="thread-messages" id="threadMessages">
-          <!-- Start form shown initially -->
+          <!-- Start form: P.J. writes the initial email -->
           <div id="startForm" class="start-form">
-            <p style="font-size:0.85rem; color: var(--nxb-color-text-secondary); margin-bottom: 14px;">Start a simulated conversation. You play the role of the person emailing Luca.</p>
+            <p style="font-size:0.85rem; color: var(--nxb-color-text-secondary); margin-bottom: 14px;">Write as ${user.name} (you). CC Luca on an email to someone you want to meet with.</p>
             <div class="form-row">
               <div class="form-group">
-                <label>Your Name (simulated)</label>
-                <input type="text" id="fromName" value="Jane Smith" />
+                <label>From (you)</label>
+                <input type="text" id="fromOrganizer" value="${user.name} <${user.email}>" readonly />
               </div>
               <div class="form-group">
-                <label>Your Email (simulated)</label>
-                <input type="email" id="fromEmail" value="jane@example.com" />
+                <label>CC</label>
+                <input type="text" value="Luca <luca@${env.MAILGUN_DOMAIN}>" readonly />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Recipient Name</label>
+                <input type="text" id="recipientName" value="Jane Smith" />
+              </div>
+              <div class="form-group">
+                <label>Recipient Email</label>
+                <input type="email" id="recipientEmail" value="jane@example.com" />
               </div>
             </div>
             <div class="form-row full">
               <div class="form-group">
                 <label>Subject</label>
-                <input type="text" id="subject" value="Quick sync this week?" />
+                <input type="text" id="subject" value="Catching up" />
               </div>
             </div>
             <div class="form-row full">
               <div class="form-group">
                 <label>Email Body</label>
-                <textarea id="startBody">Hey! Would love to grab 30 minutes with you sometime this week to chat about the project. I'm free most afternoons. Let me know what works!</textarea>
+                <textarea id="startBody">Hey Jane, would love to grab coffee sometime this week or next. I've copied Luca to help us find a time that works.</textarea>
               </div>
             </div>
-            <button class="btn btn-primary" onclick="startConversation()">Start Conversation</button>
+            <button class="btn btn-primary" onclick="startConversation()">Send as ${user.name.split(/\\s+/)[0]}</button>
             <span id="startStatus" style="margin-left: 10px; font-size: 0.82rem; color: var(--nxb-color-text-secondary);"></span>
           </div>
         </div>
 
         <!-- Reply compose (hidden until conversation starts) -->
         <div class="compose-area" id="composeArea" style="display: none;">
-          <textarea id="replyBody" placeholder="Type a reply as the simulated person..."></textarea>
+          <textarea id="replyBody" placeholder="Type a reply..."></textarea>
           <div class="compose-controls">
-            <button class="btn btn-primary" id="replyBtn" onclick="sendReply()">Send Reply</button>
+            <button class="btn btn-primary" id="replyBtn" onclick="sendReply()">Reply as <span id="replyAsName">recipient</span></button>
             <button class="btn btn-danger" onclick="resetConversation()">New Conversation</button>
             <span class="compose-status" id="replyStatus"></span>
           </div>
@@ -175,25 +188,30 @@ simulatorRoutes.get("/", async (c) => {
   <script>
     // Conversation state
     let sessionId = null;
-    let fromName = '';
-    let fromEmail = '';
+    let recipientName = '';
+    let recipientEmail = '';
+    let organizerName = '${user.name}';
+    let organizerEmail = '${user.email}';
     let subject = '';
-    let organizerEmail = '';
-    let lucaEmail = 'luca@tanzillo.ai';
+    let lucaEmail = 'luca@${env.MAILGUN_DOMAIN}';
 
-    function addMessage(msgFrom, msgTo, body, direction) {
+    function addMessage(msgFrom, msgTo, msgCc, body, type) {
       const messages = document.getElementById('threadMessages');
       const div = document.createElement('div');
-      div.className = 'msg ' + direction;
-      const label = direction === 'inbound' ? 'in' : 'out';
-      const labelText = direction === 'inbound' ? 'THEM' : 'LUCA';
-      div.innerHTML =
+      div.className = 'msg ' + type;
+      const labelMap = { organizer: 'org', inbound: 'in', outbound: 'out' };
+      const textMap = { organizer: '${user.name.split(/\s+/)[0].toUpperCase()}', inbound: 'THEM', outbound: 'LUCA' };
+      const label = labelMap[type] || 'in';
+      const labelText = textMap[type] || type.toUpperCase();
+      let headerHtml =
         '<div class="msg-header">' +
           '<span class="msg-from"><b>From:</b> ' + escapeHtml(msgFrom) + '</span>' +
           '<span class="msg-label ' + label + '">' + labelText + '</span>' +
         '</div>' +
-        '<div style="font-size:0.73rem; color: var(--nxb-color-text-muted); margin-bottom: 6px;"><b>To:</b> ' + escapeHtml(msgTo) + '</div>' +
-        '<div class="msg-body">' + escapeHtml(body) + '</div>';
+        '<div style="font-size:0.73rem; color: var(--nxb-color-text-muted); margin-bottom: 6px;"><b>To:</b> ' + escapeHtml(msgTo) +
+        (msgCc ? ' &nbsp;<b>CC:</b> ' + escapeHtml(msgCc) : '') +
+        '</div>';
+      div.innerHTML = headerHtml + '<div class="msg-body">' + escapeHtml(body) + '</div>';
       messages.appendChild(div);
       messages.scrollTop = messages.scrollHeight;
     }
@@ -257,13 +275,12 @@ simulatorRoutes.get("/", async (c) => {
       const pipeline = data.pipeline || {};
       const passed = pipeline.passed;
       const finalQC = pipeline.finalQC || {};
-      const recipients = fromEmail || 'recipient';
       const title = data.composerContext?.meetingTitle || 'Meeting';
       const code = 'SIM1';
 
       if (passed) {
         notifText.textContent =
-          'Luca drafted a reply for "' + title + '" to ' + recipients + ':\\n\\n---\\n' +
+          'Luca drafted a reply for "' + title + '" to ' + recipientEmail + ':\\n\\n---\\n' +
           (data.composedText || '').slice(0, 500) +
           '\\n---\\n\\nReply: "send ' + code + '" to approve\\nReply: "reject ' + code + '" to discard\\nReply: "edit ' + code + ': [your version]" to modify and send';
       } else {
@@ -279,8 +296,8 @@ simulatorRoutes.get("/", async (c) => {
     }
 
     async function startConversation() {
-      fromName = document.getElementById('fromName').value;
-      fromEmail = document.getElementById('fromEmail').value;
+      recipientName = document.getElementById('recipientName').value;
+      recipientEmail = document.getElementById('recipientEmail').value;
       subject = document.getElementById('subject').value;
       const body = document.getElementById('startBody').value;
 
@@ -291,26 +308,29 @@ simulatorRoutes.get("/", async (c) => {
         const res = await fetch('/simulator/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fromName, fromEmail, subject, emailBody: body }),
+          body: JSON.stringify({ recipientName, recipientEmail, subject, emailBody: body }),
         });
         const data = await res.json();
         if (!res.ok) { startStatus.textContent = 'Error: ' + (data.error || 'Unknown'); return; }
 
         sessionId = data.sessionId;
-        organizerEmail = data.organizerEmail || '';
-        lucaEmail = data.lucaEmail || 'luca@tanzillo.ai';
+        lucaEmail = data.lucaEmail || lucaEmail;
 
         // Remove start form, show conversation
         document.getElementById('startForm').remove();
         document.getElementById('threadSubject').textContent = subject;
         document.getElementById('composeArea').style.display = 'block';
+        document.getElementById('replyAsName').textContent = recipientName.split(' ')[0];
+        document.getElementById('replyBody').placeholder = 'Type a reply as ' + recipientName + '...';
 
-        // Add messages: inbound is from person → to Luca (cc organizer), outbound is from Luca → to person (bcc organizer)
-        var personAddr = fromName + ' <' + fromEmail + '>';
+        // Show P.J.'s initial email (organizer → recipient, cc Luca)
+        var orgAddr = organizerName + ' <' + organizerEmail + '>';
+        var recipAddr = recipientName + ' <' + recipientEmail + '>';
         var lucaAddr = 'Luca <' + lucaEmail + '>';
-        var orgAddr = organizerEmail ? ' (cc: ' + organizerEmail + ')' : '';
-        addMessage(personAddr, lucaAddr + orgAddr, body, 'inbound');
-        addMessage(lucaAddr, personAddr + (organizerEmail ? ' (bcc: ' + organizerEmail + ')' : ''), data.composedText, 'outbound');
+        addMessage(orgAddr, recipAddr, lucaAddr, body, 'organizer');
+
+        // Show Luca's response to the recipient (bcc organizer)
+        addMessage(lucaAddr, recipAddr, '', data.composedText, 'outbound');
 
         updateInspector(data);
       } catch (err) {
@@ -327,11 +347,10 @@ simulatorRoutes.get("/", async (c) => {
       btn.disabled = true;
       status.innerHTML = '<span class="spinner"></span> Running pipeline...';
 
-      var personAddr = fromName + ' <' + fromEmail + '>';
+      // Show the recipient's reply
+      var recipAddr = recipientName + ' <' + recipientEmail + '>';
       var lucaAddr = 'Luca <' + lucaEmail + '>';
-      var orgBcc = organizerEmail ? ' (bcc: ' + organizerEmail + ')' : '';
-      var orgCc = organizerEmail ? ' (cc: ' + organizerEmail + ')' : '';
-      addMessage(personAddr, lucaAddr + orgCc, body, 'inbound');
+      addMessage(recipAddr, lucaAddr, '', body, 'inbound');
       document.getElementById('replyBody').value = '';
 
       try {
@@ -343,7 +362,8 @@ simulatorRoutes.get("/", async (c) => {
         const data = await res.json();
         if (!res.ok) { status.textContent = 'Error: ' + (data.error || 'Unknown'); btn.disabled = false; return; }
 
-        addMessage(lucaAddr, personAddr + orgBcc, data.composedText, 'outbound');
+        // Luca replies to the recipient
+        addMessage(lucaAddr, recipAddr, '', data.composedText, 'outbound');
         updateInspector(data);
         status.textContent = data.timing?.total || '';
       } catch (err) {
@@ -375,9 +395,10 @@ simulatorRoutes.get("/", async (c) => {
 interface SimSession {
   organizerId: string;
   organizerName: string;
+  organizerEmail: string;
   tz: string;
-  fromName: string;
-  fromEmail: string;
+  recipientName: string;
+  recipientEmail: string;
   subject: string;
   /** Thread history — accumulated across turns */
   threadHistory: string[];
@@ -393,12 +414,14 @@ interface SimSession {
 const simSessions = new Map<string, SimSession>();
 
 /**
- * Start a new simulated conversation (first email).
+ * Start a new simulated conversation.
+ * P.J. (organizer) sends the first email to a recipient, CC'ing Luca.
+ * Luca then responds directly to the recipient with time proposals.
  */
 simulatorRoutes.post("/run", async (c) => {
   const body = await c.req.json<{
-    fromName: string;
-    fromEmail: string;
+    recipientName: string;
+    recipientEmail: string;
     subject: string;
     emailBody: string;
   }>();
@@ -425,10 +448,13 @@ simulatorRoutes.post("/run", async (c) => {
       .map((r) => `${days[r.dayOfWeek]}: ${r.startTime} - ${r.endTime}`)
       .join(", ");
 
+    // The sender is the ORGANIZER (P.J.) — this triggers the "sender IS the organizer"
+    // path in the extractor, which correctly identifies this as a scheduling request
+    // from the organizer to the recipient.
     const extracted = await extractIntent(
       body.emailBody,
-      body.fromEmail,
-      body.fromName,
+      organizer.email,
+      organizer.name,
       body.subject,
       {
         organizerName: organizer.name,
@@ -446,19 +472,21 @@ simulatorRoutes.post("/run", async (c) => {
     );
     timing.extract = `${Date.now() - extractStart}ms`;
 
-    // Build simulated ComposerContext with realistic slots
+    // Build simulated ComposerContext — Luca writes TO the recipient
     const simSlots = generateSimSlots(tz, extracted.time_preferences);
     const composerCtx = buildSimComposerContext(extracted.intent, {
-      meetingTitle: extracted.meeting_details.title ?? `Meeting with ${body.fromName}`,
+      meetingTitle: extracted.meeting_details.title ?? `Meeting with ${body.recipientName}`,
       organizerName: organizer.name,
-      participantNames: [body.fromName || body.fromEmail.split("@")[0]],
-      senderName: body.fromName,
+      participantNames: [body.recipientName || body.recipientEmail.split("@")[0]],
+      senderName: body.recipientName,
       formattedSlots: simSlots.formatted,
       originalEmailSummary: extracted.meeting_context_summary,
     });
 
+    // Thread history starts with P.J.'s initial email
+    const threadHistoryStr = `[inbound] From: ${organizer.name} <${organizer.email}>\nTo: ${body.recipientName} <${body.recipientEmail}>\nCC: Luca\n${body.emailBody}`;
+
     // Agents 2+3: Compose → QC loop (up to 3 attempts)
-    const threadHistoryStr = `[inbound] From: ${body.fromName}\n${body.emailBody}`;
     const loopStart = Date.now();
     const pipelineResult = await runComposeQCLoop(extracted, composerCtx, threadHistoryStr);
     timing.composeQCLoop = `${Date.now() - loopStart}ms`;
@@ -469,13 +497,14 @@ simulatorRoutes.post("/run", async (c) => {
     simSessions.set(sessionId, {
       organizerId: organizer.id,
       organizerName: organizer.name,
+      organizerEmail: organizer.email,
       tz,
-      fromName: body.fromName,
-      fromEmail: body.fromEmail,
+      recipientName: body.recipientName,
+      recipientEmail: body.recipientEmail,
       subject: body.subject,
       threadHistory: [
-        `[inbound] From: ${body.fromName}\n${body.emailBody}`,
-        `[outbound] From: Luca\n${pipelineResult.finalText}`,
+        `[inbound] From: ${organizer.name} <${organizer.email}>\nTo: ${body.recipientName} <${body.recipientEmail}>\nCC: Luca\n${body.emailBody}`,
+        `[outbound] From: Luca\nTo: ${body.recipientName} <${body.recipientEmail}>\n${pipelineResult.finalText}`,
       ],
       lastLucaResponse: pipelineResult.finalText,
       proposedSlots: simSlots.raw,
@@ -484,7 +513,6 @@ simulatorRoutes.post("/run", async (c) => {
 
     return c.json({
       sessionId,
-      organizerEmail: (await db.query.users.findFirst({ where: eq(users.id, organizer.id) }))?.email ?? "",
       lucaEmail: `luca@${env.MAILGUN_DOMAIN}`,
       extracted,
       composerContext: composerCtx,
@@ -503,7 +531,7 @@ simulatorRoutes.post("/run", async (c) => {
 
 /**
  * Send a follow-up reply in an existing simulated conversation.
- * This is where we test the back-and-forth.
+ * The user plays the RECIPIENT — their replies go to Luca, who responds.
  */
 simulatorRoutes.post("/reply", async (c) => {
   const body = await c.req.json<{
@@ -518,8 +546,8 @@ simulatorRoutes.post("/reply", async (c) => {
   const totalStart = Date.now();
 
   try {
-    // Add the inbound reply to thread history
-    session.threadHistory.push(`[inbound] From: ${session.fromName}\n${body.emailBody}`);
+    // Add the recipient's reply to thread history
+    session.threadHistory.push(`[inbound] From: ${session.recipientName} <${session.recipientEmail}>\n${body.emailBody}`);
     const threadHistoryStr = session.threadHistory.join("\n---\n");
 
     // Fetch organizer context
@@ -535,16 +563,16 @@ simulatorRoutes.post("/reply", async (c) => {
       .map((r) => `${days[r.dayOfWeek]}: ${r.startTime} - ${r.endTime}`)
       .join(", ");
 
-    // Agent 1: Extract with full thread context
+    // Agent 1: Extract — sender is now the RECIPIENT (not the organizer)
     const extractStart = Date.now();
     const extracted = await extractIntent(
       body.emailBody,
-      session.fromEmail,
-      session.fromName,
+      session.recipientEmail,
+      session.recipientName,
       session.subject,
       {
         organizerName: session.organizerName,
-        organizerEmail: (await db.query.users.findFirst({ where: eq(users.id, session.organizerId) }))?.email ?? "",
+        organizerEmail: session.organizerEmail,
         organizerTimezone: session.tz,
         meetingStatus: session.meetingStatus,
         proposedTimes: session.proposedSlots,
@@ -562,10 +590,10 @@ simulatorRoutes.post("/reply", async (c) => {
 
     // Build context based on detected intent
     const composerCtx = buildSimComposerContext(extracted.intent, {
-      meetingTitle: `Meeting with ${session.fromName}`,
+      meetingTitle: `Meeting with ${session.recipientName}`,
       organizerName: session.organizerName,
-      participantNames: [session.fromName || session.fromEmail.split("@")[0]],
-      senderName: session.fromName,
+      participantNames: [session.recipientName || session.recipientEmail.split("@")[0]],
+      senderName: session.recipientName,
       formattedSlots: extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times"
         ? generateSimSlots(session.tz, extracted.time_preferences).formatted
         : undefined,
@@ -590,7 +618,7 @@ simulatorRoutes.post("/reply", async (c) => {
     timing.total = `${Date.now() - totalStart}ms`;
 
     // Update session
-    session.threadHistory.push(`[outbound] From: Luca\n${pipelineResult.finalText}`);
+    session.threadHistory.push(`[outbound] From: Luca\nTo: ${session.recipientName} <${session.recipientEmail}>\n${pipelineResult.finalText}`);
     session.lastLucaResponse = pipelineResult.finalText;
 
     return c.json({
@@ -645,7 +673,7 @@ function getLocalDateParts(utcDate: Date, tz: string): { year: number; month: nu
 }
 
 /** Generate realistic simulated time slots that respect extracted time preferences. */
-function generateSimSlots(tz: string, timePreferences?: import("../types/index.js").TimePreference[]): { formatted: string; raw: string[] } {
+function generateSimSlots(tz: string, timePreferences?: TimePreference[]): { formatted: string; raw: string[] } {
   const now = new Date();
   const prefs = timePreferences ?? [];
 
