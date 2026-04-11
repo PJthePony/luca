@@ -296,25 +296,55 @@ RULES:
 5. Be concise. No filler. No exclamation marks. Professional but warm.
 6. NEVER invent times, dates, names, or links. Use ONLY what is provided.
 7. Do NOT mention the organizer by name in the email — they are silently BCC'd.
-8. If this is a freeform/unrelated message, write a helpful but brief response.${qcFeedback ? `
+8. If this is a freeform/unrelated message, write a helpful but brief response.`;
 
-IMPORTANT — REVISION REQUIRED:
-A previous draft was rejected by quality control. You MUST fix the issues listed below.
+  // Build messages — on retries, use multi-turn so the model sees its
+  // own previous draft and the QC feedback as a natural conversation.
+  const messages: Anthropic.MessageParam[] = [];
 
-PREVIOUS DRAFT THAT FAILED QC:
----
-${qcFeedback.previousDraft}
----
-
-ISSUES TO FIX:
-${qcFeedback.issues.map((issue) => `- ${issue}`).join("\n")}
-${qcFeedback.suggestions.length > 0 ? `\nSUGGESTIONS TO INCORPORATE:\n${qcFeedback.suggestions.map((s) => `- ${s}`).join("\n")}` : ""}
-
-Write a completely new draft that addresses ALL of the above issues. Do not repeat the same mistakes.` : ""}`;
-
-  const userMessage = qcFeedback
-    ? `Rewrite the email for the "${composerCtx.intent}" intent. The previous draft failed QC — fix all the issues listed in the system prompt.`
-    : `Compose the email for the "${composerCtx.intent}" intent.`;
+  if (qcFeedback) {
+    // Turn 1: original compose request
+    messages.push({
+      role: "user",
+      content: `Compose the email for the "${composerCtx.intent}" intent.`,
+    });
+    // Turn 2: the model's previous (failed) draft
+    messages.push({
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "prev_draft",
+          name: "compose_email",
+          input: { email_body: qcFeedback.previousDraft },
+        },
+      ],
+    });
+    // Turn 3: QC feedback as tool result + user instruction to fix
+    const issueList = qcFeedback.issues.map((issue) => `- ${issue}`).join("\n");
+    const suggestionList = qcFeedback.suggestions.length > 0
+      ? `\nSuggestions to incorporate:\n${qcFeedback.suggestions.map((s) => `- ${s}`).join("\n")}`
+      : "";
+    messages.push({
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "prev_draft",
+          content: "Draft submitted for review.",
+        },
+        {
+          type: "text",
+          text: `Quality control REJECTED this draft. You MUST fix every issue below and write a completely new draft.\n\nISSUES:\n${issueList}${suggestionList}\n\nWrite a new draft that addresses ALL issues. Do not repeat the same mistakes. Use the compose_email tool.`,
+        },
+      ],
+    });
+  } else {
+    messages.push({
+      role: "user",
+      content: `Compose the email for the "${composerCtx.intent}" intent.`,
+    });
+  }
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-5-20250929",
@@ -322,12 +352,7 @@ Write a completely new draft that addresses ALL of the above issues. Do not repe
     system: systemPrompt,
     tools: [buildComposerTool()],
     tool_choice: { type: "tool", name: "compose_email" },
-    messages: [
-      {
-        role: "user",
-        content: userMessage,
-      },
-    ],
+    messages,
   });
 
   const toolUse = response.content.find(
