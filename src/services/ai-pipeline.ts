@@ -154,6 +154,13 @@ ${context.existingAgenda?.length ? `- Current agenda items:\n${context.existingA
 
 ${context.threadHistory ? `Previous messages in this thread:\n${context.threadHistory}` : ""}
 
+HOW LUCA WORKS (critical context):
+- The organizer CC's Luca on an email to a friend/colleague. Luca then takes over and handles all scheduling communication DIRECTLY with the recipient.
+- Luca ALWAYS replies to the recipient/participant, NEVER to the organizer. The organizer is silently BCC'd.
+- When the meeting status is "proposed", Luca has already sent time slot proposals to the recipient.
+- If the recipient replies with NEW times or preferences, this is an IMPLICIT REJECTION of the previously proposed times. The intent should be "propose_alternatives" or "ask_for_more_times" — Luca needs to find new slots that match what the recipient suggested.
+- The recipient suggesting their own availability (e.g. "I'm free Thursday 11am or Friday 2/3") means the old proposals didn't work. Luca should cross-check those suggested times against the organizer's calendar and respond with times that work for BOTH parties.
+
 Instructions:
 - Extract ONLY structured data. Do not generate any email text.
 - Use the extract_scheduling_data tool to return your analysis.
@@ -163,6 +170,7 @@ TIME PREFERENCE EXTRACTION (critical):
 - ALWAYS set the dayOfWeek field (0=Sunday through 6=Saturday) when a weekday name is mentioned.
 - Use "unavailable" or "avoid" types for things they CAN'T do.
 - Use "prefer" or "available" for things they CAN do.
+- When a participant suggests specific times (e.g. "How about Thursday at 11am?"), mark those as "prefer" type preferences. The previously proposed times that were NOT selected should be considered implicitly rejected.
 
 TIME-OF-DAY PREFERENCES (use timeOfDayStart/timeOfDayEnd):
 - "mornings" → timeOfDayStart: "08:00", timeOfDayEnd: "12:00"
@@ -278,6 +286,11 @@ export async function composeEmail(
     : "";
 
   const systemPrompt = `You are composing a scheduling email on behalf of Luca, an AI scheduling assistant. Your job is to write a natural, professional email that incorporates all the required factual content.
+
+HOW LUCA WORKS:
+- The organizer CC'd Luca on an email to a recipient. Luca now handles all scheduling communication directly with the recipient.
+- You are ALWAYS writing TO the recipient, never to the organizer. The organizer is silently BCC'd.
+- When a recipient suggests new times, they are implicitly rejecting any previously proposed times. Acknowledge their suggestions and present the new time slots provided in the factual content (which have already been cross-checked against the organizer's availability).
 
 CONTEXT:
 - Intent: ${composerCtx.intent}
@@ -410,22 +423,32 @@ export async function reviewEmail(
 ): Promise<QCResult> {
   const systemPrompt = `You are a quality control reviewer for Luca, an AI scheduling assistant. Your job is to catch errors before an email is sent to a professional contact. This is critical — bad emails damage trust and are embarrassing.
 
+HOW LUCA WORKS (you must understand this to review correctly):
+- The organizer (${composerCtx.organizerName ?? "the organizer"}) CC's Luca on an email to a friend/colleague (the recipient).
+- Luca then handles ALL scheduling communication DIRECTLY with the recipient. Luca ALWAYS replies to the recipient, NEVER to the organizer. The organizer is silently BCC'd.
+- So every draft you review is addressed TO the recipient/participant — this is correct behavior, not an error.
+- When a recipient suggests new times (e.g. "How about Thursday 11am?"), they are implicitly rejecting the previously proposed times. Luca should cross-check the recipient's suggested times against the organizer's calendar and propose times that work for both.
+
 Review the draft email against the thread history and extracted data. Check for:
 
 1. CONTRADICTIONS: Does the email say something that conflicts with what was said earlier in the thread?
 2. WRONG FACTS: Are any times, dates, names, or links incorrect or mismatched from the source data?
 3. MISSING INFO: Is any required information missing (e.g., time slots that should be listed, a picker link that should be included)?
 4. TONE: Is the tone professional and appropriate? No over-enthusiasm, no awkwardness.
-5. LOGIC: Does the response make sense given what the sender asked? (e.g., if they asked to reschedule, are we confirming instead?)
+5. LOGIC: Does the response make sense given what the sender asked? (e.g., if they suggested new times, are we checking those against availability rather than re-proposing our own?)
 6. COHERENCE: Does the email read naturally? No sentence fragments, no repeated information, no contradictory statements within the email itself.
 7. SIGN-OFF: Does it end with "- Luca"?
+
+IMPORTANT — do NOT flag these as issues:
+- The email being addressed to the recipient (not the organizer) — this is correct, Luca always writes to the recipient.
+- The organizer not being mentioned by name — they are silently BCC'd.
 
 If EVERYTHING looks good, mark as "pass" with empty issues.
 If ANY issue is found, mark as "fail" and describe each issue clearly.
 If you have questions that need the organizer's input, list them in "questions".
 Non-blocking improvements go in "suggestions".
 
-Be strict. It's better to flag a borderline issue than to let a bad email through.`;
+Be strict about real issues. But do not flag correct workflow behavior as an error.`;
 
   const userContent = `DRAFT EMAIL TO REVIEW:
 ---
