@@ -2,7 +2,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { meetings, meetingLocations, meetingTypes, participants, proposedSlots } from "../db/schema.js";
 import { sendThreadedReply } from "./email.js";
-import { findAvailableSlots } from "./slot-proposer.js";
+import { findAvailableSlots, findAvailableSlotsMultiType } from "./slot-proposer.js";
 import * as machine from "./meeting-machine.js";
 import { notifyUser } from "./notification.js";
 import { getAttendeeEmails, isVideoCallType } from "./queries.js";
@@ -67,98 +67,94 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<IntentHandl
     };
   }
 
-  // Resolve meeting type from AI inference
+  // Resolve meeting type(s) from AI inference
   let effectiveDuration = extracted.meeting_details.duration_minutes ?? 30;
-  const aiMeetingTypeId = extracted.meeting_details.meeting_type_id;
-  let matchedTypeId: string | undefined;
+  const aiMeetingTypeIds = extracted.meeting_details.meeting_type_ids
+    ?? (extracted.meeting_details.meeting_type_id ? [extracted.meeting_details.meeting_type_id] : []);
+  const matchedTypeIds: string[] = [];
+  let primaryType: typeof meetingTypes.$inferSelect | undefined;
 
   // Get participant names for title building
   const allParticipants = await db.query.participants.findMany({
     where: eq(participants.meetingId, meeting.id),
   });
 
-  if (aiMeetingTypeId) {
-    let matchedType = await db.query.meetingTypes.findFirst({
-      where: and(
-        eq(meetingTypes.id, aiMeetingTypeId),
-        eq(meetingTypes.userId, organizer.id),
-      ),
+  // Resolve all candidate types
+  for (const typeId of aiMeetingTypeIds) {
+    const mType = await db.query.meetingTypes.findFirst({
+      where: and(eq(meetingTypes.id, typeId), eq(meetingTypes.userId, organizer.id)),
     });
-
-    if (!matchedType) {
-      matchedType = await db.query.meetingTypes.findFirst({
-        where: and(
-          eq(meetingTypes.userId, organizer.id),
-          eq(meetingTypes.isDefault, true),
-        ),
-      }) ?? undefined;
-    }
-
-    if (matchedType) {
-      matchedTypeId = matchedType.id;
-      if (!extracted.meeting_details.duration_minutes) {
-        effectiveDuration = matchedType.defaultDuration;
-      }
-
-      const participantNames = allParticipants
-        .filter((p) => p.role !== "organizer")
-        .map((p) => {
-          if (p.name) return p.name.split(/\s+/)[0];
-          return p.email.split("@")[0];
-        });
-      const allNames = [organizer.name.split(/\s+/)[0], ...participantNames];
-      const nameList = allNames.length <= 2
-        ? allNames.join(" and ")
-        : allNames.slice(0, -1).join(", ") + " and " + allNames[allNames.length - 1];
-      const meetingTitle = `${matchedType.name} for ${nameList}`;
-
-      const meetingUpdate: Record<string, unknown> = {
-        meetingTypeId: matchedType.id,
-        durationMin: effectiveDuration,
-        title: meetingTitle,
-        updatedAt: new Date(),
-      };
-      if (matchedType.defaultLocation) {
-        meetingUpdate.location = matchedType.defaultLocation;
-      }
-      await db
-        .update(meetings)
-        .set(meetingUpdate)
-        .where(eq(meetings.id, meeting.id));
-
-      meeting.title = meetingTitle;
+    if (mType) {
+      matchedTypeIds.push(mType.id);
+      if (!primaryType) primaryType = mType;
     }
   }
 
-  // Build a fallback title if none was set by meeting type
+  // Fall back to default type if no matches
+  if (matchedTypeIds.length === 0) {
+    const defaultType = await db.query.meetingTypes.findFirst({
+      where: and(eq(meetingTypes.userId, organizer.id), eq(meetingTypes.isDefault, true)),
+    });
+    if (defaultType) {
+      matchedTypeIds.push(defaultType.id);
+      primaryType = defaultType;
+    }
+  }
+
+  // Use primary type's duration if not explicitly stated
+  if (primaryType && !extracted.meeting_details.duration_minutes) {
+    effectiveDuration = primaryType.defaultDuration;
+  }
+
+  // Build participant name list for title
+  const participantNames = allParticipants
+    .filter((p) => p.role !== "organizer")
+    .map((p) => p.name ? p.name.split(/\s+/)[0] : p.email.split("@")[0]);
+  const allNames = [organizer.name.split(/\s+/)[0], ...participantNames];
+  const nameList = allNames.length <= 2
+    ? allNames.join(" and ")
+    : allNames.slice(0, -1).join(", ") + " and " + allNames[allNames.length - 1];
+
+  // Build title from primary type or fallback
+  if (primaryType) {
+    const meetingTitle = `${primaryType.name} for ${nameList}`;
+    meeting.title = meetingTitle;
+
+    const meetingUpdate: Record<string, unknown> = {
+      meetingTypeId: primaryType.id,
+      candidateTypeIds: matchedTypeIds,
+      durationMin: effectiveDuration,
+      title: meetingTitle,
+      updatedAt: new Date(),
+    };
+    if (primaryType.defaultLocation) {
+      meetingUpdate.location = primaryType.defaultLocation;
+    }
+    await db.update(meetings).set(meetingUpdate).where(eq(meetings.id, meeting.id));
+  }
+
   if (!meeting.title) {
-    const participantNames = allParticipants
-      .filter((p) => p.role !== "organizer")
-      .map((p) => {
-        if (p.name) return p.name.split(/\s+/)[0];
-        return p.email.split("@")[0];
-      });
-    const allNames = [organizer.name.split(/\s+/)[0], ...participantNames];
-    const nameList = allNames.length <= 2
-      ? allNames.join(" and ")
-      : allNames.slice(0, -1).join(", ") + " and " + allNames[allNames.length - 1];
     const fallbackTitle = `Meeting for ${nameList}`;
     meeting.title = fallbackTitle;
     await db
       .update(meetings)
-      .set({ title: fallbackTitle, updatedAt: new Date() })
+      .set({ title: fallbackTitle, candidateTypeIds: matchedTypeIds, updatedAt: new Date() })
       .where(eq(meetings.id, meeting.id));
   }
 
-  // Find available slots
-  const slots = await findAvailableSlots(
-    organizer.id,
-    meeting.id,
-    effectiveDuration,
-    extracted.time_preferences,
-    10,
-    matchedTypeId,
-  );
+  // Find available slots — multi-type if more than one candidate
+  let slots;
+  if (matchedTypeIds.length > 1) {
+    slots = await findAvailableSlotsMultiType(
+      organizer.id, meeting.id, matchedTypeIds,
+      extracted.time_preferences, 10,
+    );
+  } else {
+    slots = await findAvailableSlots(
+      organizer.id, meeting.id, effectiveDuration,
+      extracted.time_preferences, 10, matchedTypeIds[0],
+    );
+  }
 
   if (slots.length === 0) {
     return {
@@ -173,11 +169,16 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<IntentHandl
     };
   }
 
-  // Determine meeting type features
-  const resolvedType = matchedTypeId
-    ? (await db.query.meetingTypes.findFirst({
-        where: eq(meetingTypes.id, matchedTypeId),
-      })) ?? undefined
+  // Check if slots span multiple types — build type labels for composer
+  const hasMultipleTypes = new Set(slots.map((s) => s.meetingTypeId).filter(Boolean)).size > 1;
+  const slotTypeLabels = hasMultipleTypes
+    ? slots.map((s) => s.meetingTypeName ?? undefined).filter((l): l is string => !!l)
+    : undefined;
+
+  // Determine meeting type features from primary type (or first slot's type)
+  const resolvedTypeId = matchedTypeIds[0];
+  const resolvedType = resolvedTypeId
+    ? (await db.query.meetingTypes.findFirst({ where: eq(meetingTypes.id, resolvedTypeId) })) ?? undefined
     : undefined;
 
   const isVideoCall = resolvedType?.addGoogleMeet ?? false;
@@ -186,7 +187,7 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<IntentHandl
   // Create tentative holds and transition to PROPOSED
   const proposeResult = await machine.proposeTimes(
     meeting.id,
-    slots.map((s) => ({ start: s.start, end: s.end })),
+    slots.map((s) => ({ start: s.start, end: s.end, meetingTypeId: s.meetingTypeId })),
     tokens,
     meeting.title ?? emailSubject,
     calendarDescription,
@@ -197,9 +198,12 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<IntentHandl
     },
   );
 
-  // Format slots for composer
+  // Format slots for composer — include type labels when mixed
   const formattedSlots = proposeResult.slots
-    .map((s, i) => `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`)
+    .map((s, i) => {
+      const base = `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`;
+      return slotTypeLabels?.[i] ? `${base} (${slotTypeLabels[i].toLowerCase()})` : base;
+    })
     .join("\n");
 
   const agendaAck = extracted.agenda_items && extracted.agenda_items.length > 0
@@ -238,6 +242,7 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<IntentHandl
       meetNote,
       phoneNote,
       agendaAck,
+      slotTypeLabels,
       meetingTitle: meeting.title ?? emailSubject,
       organizerName: organizer.name,
       participantNames: allParticipants.filter((p) => p.role !== "organizer").map((p) => p.name ?? p.email.split("@")[0]),

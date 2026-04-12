@@ -90,7 +90,13 @@ function buildExtractorTool(): Anthropic.Tool {
             meeting_type_id: {
               type: "string",
               description:
-                "The UUID of the matching meeting type from the organizer's configured list.",
+                "The UUID of the best-matching meeting type. Use meeting_type_ids instead when multiple types are mentioned.",
+            },
+            meeting_type_ids: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Array of matching meeting type UUIDs when multiple types could work (e.g., 'coffee or lunch'). Ordered by preference. Use this instead of meeting_type_id when more than one type is mentioned.",
             },
           },
         },
@@ -114,6 +120,11 @@ function buildExtractorTool(): Anthropic.Tool {
           type: "string",
           description:
             "A phone number shared by the sender, if any.",
+        },
+        suggested_type_switch: {
+          type: "string",
+          description:
+            "If the recipient suggests changing the meeting type (e.g., 'can we do a video call instead?'), set this to the UUID of the new meeting type.",
         },
       },
       required: ["intent"],
@@ -180,7 +191,9 @@ TIME-OF-DAY PREFERENCES (use timeOfDayStart/timeOfDayEnd):
 - "evenings" → timeOfDayStart: "17:00", timeOfDayEnd: "21:00"
 
 MEETING TYPE INFERENCE:
-${context.userMeetingTypes?.length ? `The organizer has these meeting types configured:\n${context.userMeetingTypes.map((mt: { id: string; name: string; isOnline: boolean; defaultDuration: number }) => `  - ${mt.id}: "${mt.name}" (${mt.isOnline ? "online" : "in-person"}, ${mt.defaultDuration} min)`).join("\n")}\nIf none match, omit meeting_type_id.` : "No meeting types are configured — omit meeting_type_id."}
+${context.userMeetingTypes?.length ? `The organizer has these meeting types configured:\n${context.userMeetingTypes.map((mt: { id: string; name: string; isOnline: boolean; defaultDuration: number }) => `  - ${mt.id}: "${mt.name}" (${mt.isOnline ? "online" : "in-person"}, ${mt.defaultDuration} min)`).join("\n")}\nIf none match, omit meeting_type_id/meeting_type_ids.` : "No meeting types are configured — omit meeting_type_id."}
+- If the email mentions MULTIPLE meeting types (e.g., "coffee or lunch", "drinks or dinner", "grab coffee or maybe just a video call"), use meeting_type_ids (array) with ALL matching type UUIDs ordered by preference. Only use meeting_type_id (singular) when exactly one type is mentioned.
+- If a participant suggests switching the meeting type (e.g., "can we just do a video call instead?"), set suggested_type_switch to the new type's UUID.
 - If duration is not explicitly stated, do NOT set duration_minutes.
 
 MEETING CONTEXT & AGENDA:
@@ -222,6 +235,7 @@ MEETING CONTEXT & AGENDA:
     meeting_context_summary: input.meeting_context_summary as string | undefined,
     agenda_items: (input.agenda_items as string[]) ?? [],
     phone_number: input.phone_number as string | undefined,
+    suggested_type_switch: input.suggested_type_switch as string | undefined,
   };
 }
 
@@ -254,7 +268,10 @@ export async function composeEmail(
   const sections: string[] = [];
 
   if (composerCtx.formattedSlots) {
-    sections.push(`TIME SLOTS (must appear exactly as written):\n${composerCtx.formattedSlots}`);
+    const typeNote = composerCtx.slotTypeLabels && composerCtx.slotTypeLabels.length > 0
+      ? "\nNote: these slots span different meeting types (e.g., coffee vs lunch). The type labels in parentheses are part of the slot text — include them exactly as written."
+      : "";
+    sections.push(`TIME SLOTS (must appear exactly as written):\n${composerCtx.formattedSlots}${typeNote}`);
   }
   if (composerCtx.confirmedTime) {
     sections.push(`CONFIRMED TIME: ${composerCtx.confirmedTime}`);

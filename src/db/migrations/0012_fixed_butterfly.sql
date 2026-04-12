@@ -1,0 +1,3 @@
+ALTER TABLE "meetings" ADD COLUMN "candidate_type_ids" uuid[] DEFAULT '{}' NOT NULL;--> statement-breakpoint
+ALTER TABLE "proposed_slots" ADD COLUMN "meeting_type_id" uuid;--> statement-breakpoint
+ALTER TABLE "proposed_slots" ADD CONSTRAINT "proposed_slots_meeting_type_id_meeting_types_id_fk" FOREIGN KEY ("meeting_type_id") REFERENCES "public"."meeting_types"("id") ON DELETE no action ON UPDATE no action;

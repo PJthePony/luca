@@ -9,6 +9,8 @@ export interface ProposedSlot {
   start: Date;
   end: Date;
   score: number;
+  meetingTypeId?: string;
+  meetingTypeName?: string;
 }
 
 export interface BlockingEvent {
@@ -167,6 +169,230 @@ export async function findAvailableSlots(
   // Apply diversity pass: spread across different days, enforce 2-hour gaps
   const diverse = applyDiversityPass(filtered, tz);
   return diverse.slice(0, 3);
+}
+
+/**
+ * Find available time slots across MULTIPLE meeting types.
+ * Generates candidates for each type (with its own constraints), tags each
+ * with the type ID/name, then merges, scores, and picks the best 3.
+ *
+ * This allows "coffee or lunch" where coffee has afternoon-only constraints
+ * and lunch has midday constraints — slots from both pools get proposed.
+ */
+export async function findAvailableSlotsMultiType(
+  organizerId: string,
+  meetingId: string,
+  typeIds: string[],
+  timePreferences: TimePreference[],
+  searchDays: number = 10,
+): Promise<ProposedSlot[]> {
+  // Get organizer and their tokens
+  const organizer = await db.query.users.findFirst({
+    where: eq(users.id, organizerId),
+  });
+  if (!organizer?.googleTokens) {
+    throw new Error("Organizer has no Google Calendar connected");
+  }
+
+  const tz = organizer.timezone || "America/New_York";
+
+  // Get standing availability rules
+  const rules = await db.query.availabilityRules.findMany({
+    where: eq(availabilityRules.userId, organizerId),
+  });
+
+  // Get all participants with calendar access
+  const meetingParticipants = await db.query.participants.findMany({
+    where: eq(participants.meetingId, meetingId),
+  });
+
+  // Build calendar IDs for busy query
+  const orgCalendars = await db.query.userCalendars.findMany({
+    where: eq(userCalendars.userId, organizerId),
+  });
+  const calendarIds: string[] = orgCalendars.length > 0
+    ? orgCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId)
+    : [organizer.email];
+
+  for (const p of meetingParticipants) {
+    if (p.userId) {
+      const pUser = await db.query.users.findFirst({
+        where: eq(users.id, p.userId),
+      });
+      if (pUser?.googleTokens) {
+        const pCalendars = await db.query.userCalendars.findMany({
+          where: eq(userCalendars.userId, p.userId),
+        });
+        if (pCalendars.length > 0) {
+          calendarIds.push(
+            ...pCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId),
+          );
+        } else {
+          calendarIds.push(pUser.email);
+        }
+      }
+    }
+  }
+
+  // Fetch events for the search window
+  const now = new Date();
+  const searchEnd = new Date(now.getTime() + searchDays * 24 * 60 * 60 * 1000);
+
+  const allEvents: CalendarEvent[] = [];
+  for (const calId of calendarIds) {
+    const events = await gcal.listEvents(
+      organizer.googleTokens as GoogleTokens,
+      calId,
+      now,
+      searchEnd,
+    );
+    allEvents.push(...events);
+  }
+
+  // Filter out ignored events
+  const ignoredEvents = await db.query.ignoredCalendarEvents.findMany({
+    where: eq(ignoredCalendarEvents.userId, organizerId),
+  });
+  const ignoredKeys = new Set(
+    ignoredEvents.map((e) => `${e.calendarId}:${e.googleEventId}`),
+  );
+  const allBusy = allEvents
+    .filter((e) => !ignoredKeys.has(`${e.calendarId}:${e.eventId}`))
+    .map((e) => ({ start: e.start, end: e.end }));
+
+  // Load all candidate meeting types
+  const types = await Promise.all(
+    typeIds.map((id) =>
+      db.query.meetingTypes.findFirst({ where: eq(meetingTypes.id, id) }),
+    ),
+  );
+
+  // Generate candidates for EACH type with its own constraints
+  let allCandidates: ProposedSlot[] = [];
+  for (const mType of types) {
+    if (!mType) continue;
+
+    const typeTimeWindow = (mType.earliestTime || mType.latestTime)
+      ? { earliest: mType.earliestTime ?? "00:00", latest: mType.latestTime ?? "23:59" }
+      : undefined;
+    const typeAllowedDays = (mType.allowedDays && mType.allowedDays.length > 0)
+      ? mType.allowedDays
+      : undefined;
+
+    const candidates = generateCandidateSlots(
+      now, searchEnd, mType.defaultDuration, allBusy, rules, tz,
+      typeTimeWindow, typeAllowedDays,
+    );
+
+    // Score and tag each candidate with this type
+    const scored = candidates.map((slot) => ({
+      ...slot,
+      score: scoreSlot(slot, rules, timePreferences, now, tz),
+      meetingTypeId: mType.id,
+      meetingTypeName: mType.name,
+    }));
+
+    allCandidates.push(...scored);
+  }
+
+  // Hard-filter by time preferences
+  const filtered = applyHardFilter(allCandidates, timePreferences, tz);
+
+  // Sort by score descending
+  filtered.sort((a, b) => b.score - a.score);
+
+  // Diversity pass — spread across days and types
+  const diverse = applyDiversityPassMultiType(filtered, tz);
+  return diverse.slice(0, 3);
+}
+
+/**
+ * Diversity pass for multi-type results: spread across different days
+ * AND different meeting types. Enforce 4-hour min gap on same day.
+ */
+function applyDiversityPassMultiType(
+  slots: ProposedSlot[],
+  tz: string,
+): ProposedSlot[] {
+  if (slots.length <= 3) return slots;
+
+  const MIN_GAP_MS = 4 * 60 * 60 * 1000;
+  const MAX_PER_DAY = 2;
+
+  // Group by local date
+  const byDay = new Map<string, ProposedSlot[]>();
+  for (const slot of slots) {
+    const dateKey = getLocalDateString(slot.start, tz);
+    if (!byDay.has(dateKey)) byDay.set(dateKey, []);
+    byDay.get(dateKey)!.push(slot);
+  }
+
+  const dayEntries = [...byDay.entries()].sort(
+    (a, b) => b[1][0].score - a[1][0].score,
+  );
+
+  const result: ProposedSlot[] = [];
+  const dayPickCounts = new Map<string, number>();
+  const usedTypeIds = new Set<string>();
+
+  // First pass: try to pick from different types across different days
+  for (const [day, daySlots] of dayEntries) {
+    if (result.length >= 3) break;
+    if ((dayPickCounts.get(day) ?? 0) >= MAX_PER_DAY) continue;
+
+    // Prefer a slot from a type we haven't used yet
+    const candidate = daySlots.find(
+      (s) => s.meetingTypeId && !usedTypeIds.has(s.meetingTypeId),
+    ) ?? daySlots[0];
+
+    const sameDayPicks = result.filter(
+      (r) => getLocalDateString(r.start, tz) === day,
+    );
+    const tooClose = sameDayPicks.some(
+      (r) => Math.abs(candidate.start.getTime() - r.start.getTime()) < MIN_GAP_MS,
+    );
+
+    if (!tooClose) {
+      result.push(candidate);
+      dayPickCounts.set(day, (dayPickCounts.get(day) ?? 0) + 1);
+      if (candidate.meetingTypeId) usedTypeIds.add(candidate.meetingTypeId);
+    }
+  }
+
+  // Second pass: fill remaining slots from best scores
+  if (result.length < 3) {
+    for (const slot of slots) {
+      if (result.length >= 3) break;
+      if (result.some((r) => r.start.getTime() === slot.start.getTime())) continue;
+
+      const day = getLocalDateString(slot.start, tz);
+      if ((dayPickCounts.get(day) ?? 0) >= MAX_PER_DAY) continue;
+
+      const sameDayPicks = result.filter(
+        (r) => getLocalDateString(r.start, tz) === day,
+      );
+      const tooClose = sameDayPicks.some(
+        (r) => Math.abs(slot.start.getTime() - r.start.getTime()) < MIN_GAP_MS,
+      );
+
+      if (!tooClose) {
+        result.push(slot);
+        dayPickCounts.set(day, (dayPickCounts.get(day) ?? 0) + 1);
+      }
+    }
+  }
+
+  // Backfill from top scores if still short
+  if (result.length < 3) {
+    for (const slot of slots) {
+      if (result.length >= 3) break;
+      if (!result.some((r) => r.start.getTime() === slot.start.getTime())) {
+        result.push(slot);
+      }
+    }
+  }
+
+  return result;
 }
 
 /**

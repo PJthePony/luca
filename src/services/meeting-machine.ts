@@ -43,7 +43,7 @@ async function getWorkEmail(organizerId: string): Promise<string | null> {
  */
 export async function proposeTimes(
   meetingId: string,
-  slots: { start: Date; end: Date }[],
+  slots: { start: Date; end: Date; meetingTypeId?: string }[],
   organizerTokens: GoogleTokens,
   meetingTitle: string,
   description?: string,
@@ -109,6 +109,7 @@ export async function proposeTimes(
           meetingId,
           startTime: slot.start,
           endTime: slot.end,
+          meetingTypeId: slot.meetingTypeId ?? null,
           tentativeEventIds: {
             primary: result.eventId,
             ...(workBusyId ? { workBusy: workBusyId } : {}),
@@ -176,18 +177,19 @@ export async function confirmSlot(
       description += (description ? "\n\n" : "") + "Agenda:\n" + agenda.map((a) => `- ${a}`).join("\n");
     }
 
-    // Check meeting type for video call flag and default location
+    // Resolve meeting type — prefer the slot's type (for multi-type meetings),
+    // fall back to the meeting's type
+    const resolvedTypeId = selectedSlot.meetingTypeId ?? meeting.meetingTypeId;
     let isVideoCall = false;
     let location = meeting.location ?? undefined;
-    if (meeting.meetingTypeId) {
+    if (resolvedTypeId) {
       const mType = await tx.query.meetingTypes.findFirst({
-        where: eq(meetingTypes.id, meeting.meetingTypeId),
+        where: eq(meetingTypes.id, resolvedTypeId),
       });
       if (mType) {
         if (mType.addGoogleMeet) {
           isVideoCall = true;
         }
-        // Fall back to meeting type's default location if meeting has none
         if (!location && mType.defaultLocation) {
           location = mType.defaultLocation;
         }
@@ -241,7 +243,7 @@ export async function confirmSlot(
       .set({ isSelected: true })
       .where(eq(proposedSlots.id, slotId));
 
-    // Transition to CONFIRMED
+    // Transition to CONFIRMED — set meetingTypeId from the slot's type
     await tx
       .update(meetings)
       .set({
@@ -249,6 +251,7 @@ export async function confirmSlot(
         confirmedStart: selectedSlot.startTime,
         confirmedEnd: selectedSlot.endTime,
         googleEventId: eventIds?.primary,
+        ...(resolvedTypeId ? { meetingTypeId: resolvedTypeId } : {}),
         updatedAt: new Date(),
       })
       .where(eq(meetings.id, meetingId));

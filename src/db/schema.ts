@@ -139,6 +139,7 @@ export const meetings = pgTable(
     status: text("status").notNull().default("draft"),
     durationMin: integer("duration_min").notNull().default(30),
     meetingTypeId: uuid("meeting_type_id").references(() => meetingTypes.id),
+    candidateTypeIds: uuid("candidate_type_ids").array().notNull().default([]),
     location: text("location"),
     confirmedLocationId: uuid("confirmed_location_id").references(() => meetingLocations.id),
     notes: text("notes"),
@@ -198,6 +199,7 @@ export const proposedSlots = pgTable(
     startTime: timestamp("start_time", { withTimezone: true }).notNull(),
     endTime: timestamp("end_time", { withTimezone: true }).notNull(),
     isSelected: boolean("is_selected").notNull().default(false),
+    meetingTypeId: uuid("meeting_type_id").references(() => meetingTypes.id),
     tentativeEventIds: jsonb("tentative_event_ids"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

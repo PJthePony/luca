@@ -26,6 +26,7 @@ export interface MeetingDetails {
   location?: string;
   notes?: string;
   meeting_type_id?: string;
+  meeting_type_ids?: string[];
 }
 
 export interface ParsedEmail {
@@ -56,6 +57,7 @@ export interface ExtractedData {
   meeting_context_summary?: string;
   agenda_items?: string[];
   phone_number?: string;
+  suggested_type_switch?: string;
 }
 
 /** Context built by intent handlers for Agent 2 (Composer) */
@@ -75,6 +77,7 @@ export interface ComposerContext {
   noSlotsMessage?: string;
   originalEmailSummary?: string;
   senderName?: string;
+  slotTypeLabels?: string[];
 }
 
 /** Agent 3 output: QC review result */
