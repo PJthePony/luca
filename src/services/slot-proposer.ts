@@ -757,17 +757,16 @@ function applyHardFilter(
   );
 
   if (includePrefs.length > 0) {
-    // ISO date window filtering
+    // ISO date window filtering — strict, no fallback
     const isoPrefs = includePrefs.filter((p) => p.start && p.end);
     if (isoPrefs.length > 0) {
-      const filtered = result.filter((slot) =>
+      result = result.filter((slot) =>
         isoPrefs.some((pref) => {
           const prefStart = new Date(pref.start!);
           const prefEnd = new Date(pref.end!);
           return slot.start < prefEnd && slot.end > prefStart;
         }),
       );
-      if (filtered.length > 0) result = filtered;
     }
 
     // Day-of-week filtering (only for prefs without ISO dates)
