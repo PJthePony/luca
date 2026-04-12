@@ -748,10 +748,18 @@ simulatorRoutes.post("/reply", async (c) => {
     const primaryType = typeIds.length > 0 ? userTypes.find((t) => t.id === typeIds[0]) : undefined;
     const duration = extracted.meeting_details.duration_minutes ?? primaryType?.defaultDuration ?? 30;
 
-    // Merge organizer's original preferences with the recipient's new preferences
+    // Merge preferences: keep organizer's hard constraints (unavailable/avoid),
+    // but if the recipient provides their own prefer/available prefs, use those
+    // INSTEAD of the organizer's — the recipient's day/time preferences take priority.
+    const recipientPrefs = extracted.time_preferences ?? [];
+    const recipientHasPrefers = recipientPrefs.some(p => p.type === "prefer" || p.type === "available");
     const mergedPreferences = [
-      ...session.organizerPreferences,
-      ...(extracted.time_preferences ?? []),
+      // Always keep organizer's hard constraints
+      ...session.organizerPreferences.filter(p => p.type === "unavailable" || p.type === "avoid"),
+      // Keep organizer's soft preferences ONLY if recipient didn't provide their own
+      ...(recipientHasPrefers ? [] : session.organizerPreferences.filter(p => p.type === "prefer" || p.type === "available")),
+      // All recipient preferences
+      ...recipientPrefs,
     ];
 
     let replySlots: { formatted: string; raw: string[]; typeLabels?: string[] } | undefined;
