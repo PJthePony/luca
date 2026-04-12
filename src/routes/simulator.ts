@@ -670,8 +670,7 @@ simulatorRoutes.post("/run", async (c) => {
     });
   } catch (err) {
     console.error("Simulator error:", err);
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    const isAuthError = msg.includes("invalid_grant") || msg.includes("Invalid Credentials") || msg.includes("No Google Calendar connected");
+    const { msg, isAuthError } = classifyError(err);
     return c.json({
       error: msg,
       authError: isAuthError,
@@ -810,8 +809,7 @@ simulatorRoutes.post("/reply", async (c) => {
     });
   } catch (err) {
     console.error("Simulator reply error:", err);
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    const isAuthError = msg.includes("invalid_grant") || msg.includes("Invalid Credentials") || msg.includes("No Google Calendar connected");
+    const { msg, isAuthError } = classifyError(err);
     return c.json({
       error: msg,
       authError: isAuthError,
@@ -822,6 +820,53 @@ simulatorRoutes.post("/reply", async (c) => {
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Extract a meaningful error message and detect auth errors from Google API responses. */
+function classifyError(err: unknown): { msg: string; isAuthError: boolean } {
+  // Build a comprehensive error string from all possible locations
+  const parts: string[] = [];
+
+  if (err instanceof Error) {
+    parts.push(err.message);
+  }
+  if (typeof err === "string") {
+    parts.push(err);
+  }
+
+  // GaxiosError nests details in response.data
+  const anyErr = err as Record<string, unknown>;
+  if (anyErr?.response) {
+    const resp = anyErr.response as Record<string, unknown>;
+    if (resp.data) {
+      const data = resp.data as Record<string, unknown>;
+      if (data.error) {
+        if (typeof data.error === "string") parts.push(data.error);
+        else if (typeof (data.error as Record<string, unknown>)?.message === "string") {
+          parts.push((data.error as Record<string, string>).message);
+        }
+      }
+      if (typeof data.error_description === "string") parts.push(data.error_description);
+    }
+    if (typeof resp.status === "number") parts.push(`HTTP ${resp.status}`);
+  }
+
+  // Also check code property (some Google errors use this)
+  if (typeof anyErr?.code === "number" || typeof anyErr?.code === "string") {
+    parts.push(`code: ${anyErr.code}`);
+  }
+
+  const msg = parts.length > 0 ? parts.join(" — ") : "Unknown error";
+  const fullText = (msg + " " + JSON.stringify(err)).toLowerCase();
+  const isAuthError =
+    fullText.includes("invalid_grant") ||
+    fullText.includes("invalid credentials") ||
+    fullText.includes("token has been expired or revoked") ||
+    fullText.includes("no google calendar connected") ||
+    fullText.includes("has no google calendar") ||
+    fullText.includes("401");
+
+  return { msg, isAuthError };
+}
 
 /** Format real ProposedSlot[] results from the slot proposer into display strings. */
 function formatRealSlots(
