@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { meetings, emailThreads, emailMessages, participants, users, meetingTypes, availabilityRules, proposedSlots } from "../db/schema.js";
+import { meetings, emailThreads, emailMessages, participants, users, meetingTypes, availabilityRules } from "../db/schema.js";
 import { extractIntent, runComposeQCLoop } from "../services/ai-pipeline.js";
 import type { PipelineResult } from "../services/ai-pipeline.js";
 import { formatSlot } from "../services/intent-handlers.js";
+import { findAvailableSlots, findAvailableSlotsMultiType } from "../services/slot-proposer.js";
+import type { ProposedSlot } from "../services/slot-proposer.js";
 import type { ComposerContext, TimePreference } from "../types/index.js";
 import { baseStyles, fontLinks, logoSvg } from "../lib/styles.js";
 import { env } from "../config.js";
@@ -515,6 +517,8 @@ interface SimSession {
   proposedSlots: string[];
   /** Meeting status tracking */
   meetingStatus: string;
+  /** Organizer's original time preferences — carried across all turns */
+  organizerPreferences: TimePreference[];
 }
 
 // In-memory session store (simulator only — not for production data)
@@ -579,22 +583,35 @@ simulatorRoutes.post("/run", async (c) => {
     );
     timing.extract = `${Date.now() - extractStart}ms`;
 
-    // Resolve meeting type constraints for slot generation
+    // Use REAL availability from Google Calendar + meeting type constraints
     const typeIds = extracted.meeting_details.meeting_type_ids
       ?? (extracted.meeting_details.meeting_type_id ? [extracted.meeting_details.meeting_type_id] : []);
-    const resolvedTypes = typeIds.length > 0
-      ? userTypes.filter((t) => typeIds.includes(t.id))
-      : [];
+    const duration = extracted.meeting_details.duration_minutes ?? 30;
 
-    // Build simulated ComposerContext — Luca writes TO the recipient
-    const simSlots = generateSimSlots(tz, extracted.time_preferences, resolvedTypes);
+    const slotsStart = Date.now();
+    let realSlots: ProposedSlot[];
+    if (typeIds.length > 1) {
+      realSlots = await findAvailableSlotsMultiType(
+        organizer.id, null, typeIds, extracted.time_preferences ?? [], 14,
+      );
+    } else {
+      realSlots = await findAvailableSlots(
+        organizer.id, null, duration, extracted.time_preferences ?? [], 14, typeIds[0] ?? null,
+      );
+    }
+    timing.slotSearch = `${Date.now() - slotsStart}ms`;
+
+    // Format slots for the composer
+    const slotResults = formatRealSlots(realSlots, tz);
+
+    // Build ComposerContext — Luca writes TO the recipient
     const composerCtx = buildSimComposerContext(extracted.intent, {
       meetingTitle: extracted.meeting_details.title ?? `Meeting with ${body.recipientName}`,
       organizerName: organizer.name,
       participantNames: [body.recipientName || body.recipientEmail.split("@")[0]],
       senderName: body.recipientName,
-      formattedSlots: simSlots.formatted,
-      slotTypeLabels: simSlots.typeLabels,
+      formattedSlots: slotResults.formatted,
+      slotTypeLabels: slotResults.typeLabels,
       originalEmailSummary: extracted.meeting_context_summary,
     });
 
@@ -622,8 +639,9 @@ simulatorRoutes.post("/run", async (c) => {
         `[outbound] From: Luca\nTo: ${body.recipientName} <${body.recipientEmail}>\n${pipelineResult.finalText}`,
       ],
       lastLucaResponse: pipelineResult.finalText,
-      proposedSlots: simSlots.raw,
+      proposedSlots: slotResults.raw,
       meetingStatus: extracted.intent === "schedule_new" ? "proposed" : "draft",
+      organizerPreferences: extracted.time_preferences ?? [],
     });
 
     return c.json({
@@ -703,17 +721,32 @@ simulatorRoutes.post("/reply", async (c) => {
     );
     timing.extract = `${Date.now() - extractStart}ms`;
 
-    // Resolve meeting type constraints for slot generation
+    // Use REAL availability for slot generation
     const typeIds = extracted.meeting_details.meeting_type_ids
       ?? (extracted.meeting_details.meeting_type_id ? [extracted.meeting_details.meeting_type_id] : []);
-    const resolvedTypes = typeIds.length > 0
-      ? userTypes.filter((t) => typeIds.includes(t.id))
-      : [];
+    const duration = extracted.meeting_details.duration_minutes ?? 30;
 
-    // Build context based on detected intent
+    // Merge organizer's original preferences with the recipient's new preferences
+    const mergedPreferences = [
+      ...session.organizerPreferences,
+      ...(extracted.time_preferences ?? []),
+    ];
+
     let replySlots: { formatted: string; raw: string[]; typeLabels?: string[] } | undefined;
     if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times" || extracted.intent === "propose_alternatives") {
-      replySlots = generateSimSlots(session.tz, extracted.time_preferences, resolvedTypes);
+      const slotsStart = Date.now();
+      let realSlots: ProposedSlot[];
+      if (typeIds.length > 1) {
+        realSlots = await findAvailableSlotsMultiType(
+          session.organizerId, null, typeIds, mergedPreferences, 14,
+        );
+      } else {
+        realSlots = await findAvailableSlots(
+          session.organizerId, null, duration, mergedPreferences, 14, typeIds[0] ?? null,
+        );
+      }
+      timing.slotSearch = `${Date.now() - slotsStart}ms`;
+      replySlots = formatRealSlots(realSlots, session.tz);
     }
 
     const composerCtx = buildSimComposerContext(extracted.intent, {
@@ -734,7 +767,7 @@ simulatorRoutes.post("/reply", async (c) => {
       session.meetingStatus = "confirmed";
     } else if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times" || extracted.intent === "propose_alternatives") {
       session.meetingStatus = "proposed";
-      session.proposedSlots = replySlots?.raw ?? generateSimSlots(session.tz, extracted.time_preferences, resolvedTypes).raw;
+      session.proposedSlots = replySlots?.raw ?? [];
     } else if (extracted.intent === "decline") {
       session.meetingStatus = "cancelled";
     }
@@ -767,203 +800,28 @@ simulatorRoutes.post("/reply", async (c) => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Convert a local date/time in a given timezone to a UTC Date.
- * Mirrors the same function in slot-proposer.ts.
- */
-function localTimeToUtc(year: number, month: number, day: number, hour: number, minute: number, tz: string): Date {
-  const rough = new Date(Date.UTC(year, month, day, hour, minute, 0, 0));
-  const utcStr = rough.toLocaleString("en-US", { timeZone: "UTC" });
-  const tzStr = rough.toLocaleString("en-US", { timeZone: tz });
-  const offsetMs = new Date(tzStr).getTime() - new Date(utcStr).getTime();
-  return new Date(rough.getTime() - offsetMs);
-}
-
-/**
- * Get the local date components for a UTC date in a given timezone.
- */
-function getLocalDateParts(utcDate: Date, tz: string): { year: number; month: number; day: number; dayOfWeek: number } {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-  }).formatToParts(utcDate);
-
-  const year = parseInt(parts.find(p => p.type === "year")!.value);
-  const month = parseInt(parts.find(p => p.type === "month")!.value) - 1;
-  const day = parseInt(parts.find(p => p.type === "day")!.value);
-  const weekday = parts.find(p => p.type === "weekday")!.value;
-  const dowMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-
-  return { year, month, day, dayOfWeek: dowMap[weekday] ?? 0 };
-}
-
-interface MeetingTypeConstraint {
-  id: string;
-  name: string;
-  defaultDuration: number;
-  earliestTime: string | null;
-  latestTime: string | null;
-  allowedDays: number[] | null;
-}
-
-/** Generate realistic simulated time slots that respect extracted time preferences and meeting type constraints. */
-function generateSimSlots(
+/** Format real ProposedSlot[] results from the slot proposer into display strings. */
+function formatRealSlots(
+  slots: ProposedSlot[],
   tz: string,
-  timePreferences?: TimePreference[],
-  meetingTypes?: MeetingTypeConstraint[],
 ): { formatted: string; raw: string[]; typeLabels?: string[] } {
-  const now = new Date();
-  const prefs = timePreferences ?? [];
-  const types = meetingTypes ?? [];
-  const hasMultipleTypes = types.length > 1;
-
-  // Build type-specific time windows (or use defaults if no types)
-  const typeWindows = types.length > 0
-    ? types.map((t) => ({
-        id: t.id,
-        name: t.name,
-        duration: t.defaultDuration,
-        earliest: t.earliestTime ? parseTimeToMinutes(t.earliestTime) : 9 * 60,
-        latest: t.latestTime ? parseTimeToMinutes(t.latestTime) : 17 * 60,
-        allowedDays: t.allowedDays ?? [1, 2, 3, 4, 5],
-      }))
-    : [{ id: "", name: "", duration: 30, earliest: 9 * 60, latest: 17 * 60, allowedDays: [1, 2, 3, 4, 5] }];
-
-  // Generate candidate slots across 14 days
-  const candidates: { start: Date; end: Date; score: number; typeName: string }[] = [];
-
-  const todayParts = getLocalDateParts(now, tz);
-  const tomorrowBase = new Date(todayParts.year, todayParts.month, todayParts.day + 1);
-
-  for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
-    const localDate = new Date(tomorrowBase);
-    localDate.setDate(localDate.getDate() + dayOffset);
-
-    const year = localDate.getFullYear();
-    const month = localDate.getMonth();
-    const day = localDate.getDate();
-
-    const dayStartUtc = localTimeToUtc(year, month, day, 9, 0, tz);
-    const { dayOfWeek } = getLocalDateParts(dayStartUtc, tz);
-
-    for (const tw of typeWindows) {
-      // Check if this day is allowed for this type
-      if (!tw.allowedDays.includes(dayOfWeek)) continue;
-
-      // Generate hourly slots within the type's time window
-      const startHour = Math.floor(tw.earliest / 60);
-      const endHour = Math.floor(tw.latest / 60);
-      const durationMs = tw.duration * 60 * 1000;
-
-      for (let h = startHour; h < endHour; h++) {
-        const start = localTimeToUtc(year, month, day, h, 0, tz);
-        const end = new Date(start.getTime() + durationMs);
-
-        if (start <= now) continue;
-
-        // Check end time doesn't exceed latest
-        const endMinutes = h * 60 + tw.duration;
-        if (endMinutes > tw.latest) continue;
-
-        let score = 100;
-
-        for (const pref of prefs) {
-          if (pref.start && pref.end) {
-            const prefStart = new Date(pref.start);
-            const prefEnd = new Date(pref.end);
-            const overlaps = start < prefEnd && end > prefStart;
-            if (pref.type === "prefer" && overlaps) score += 50;
-            if (pref.type === "available" && overlaps) score += 30;
-            if (pref.type === "avoid" && overlaps) score -= 100;
-            if (pref.type === "unavailable" && overlaps) score -= 200;
-          }
-
-          if (pref.dayOfWeek !== undefined && !pref.start) {
-            if (pref.type === "prefer" && dayOfWeek === pref.dayOfWeek) score += 40;
-            if (pref.type === "available" && dayOfWeek === pref.dayOfWeek) score += 25;
-            if (pref.type === "avoid" && dayOfWeek === pref.dayOfWeek) score -= 80;
-            if (pref.type === "unavailable" && dayOfWeek === pref.dayOfWeek) score -= 150;
-          }
-
-          if (pref.timeOfDayStart && pref.timeOfDayEnd && !pref.start) {
-            const [sh, sm] = pref.timeOfDayStart.split(":").map(Number);
-            const [eh, em] = pref.timeOfDayEnd.split(":").map(Number);
-            const slotMinutes = h * 60;
-            const inRange = slotMinutes >= sh * 60 + sm && slotMinutes < eh * 60 + em;
-            if (pref.type === "prefer" && inRange) score += 40;
-            if (pref.type === "available" && inRange) score += 25;
-            if (pref.type === "avoid" && inRange) score -= 100;
-            if (pref.type === "unavailable" && inRange) score -= 200;
-          }
-        }
-
-        if (h >= 10 && h <= 14) score += 5;
-        score += Math.max(0, 3 - Math.floor(dayOffset / 2));
-
-        candidates.push({ start, end, score, typeName: tw.name });
-      }
-    }
-  }
-
-  // Hard-filter: remove slots with negative scores
-  let viable = candidates.filter(c => c.score > 0);
-  if (viable.length === 0) viable = candidates;
-
-  viable.sort((a, b) => b.score - a.score);
-
-  // Pick top 3, spreading across days and types for diversity
-  const picked: { start: Date; end: Date; typeName: string }[] = [];
-  const usedDays = new Set<string>();
-  const usedTypes = new Set<string>();
-
-  // First pass: prioritize diversity across days AND types
-  for (const slot of viable) {
-    if (picked.length >= 3) break;
-    const dateKey = slot.start.toLocaleDateString("en-US", { timeZone: tz });
-    const isNewDay = !usedDays.has(dateKey);
-    const isNewType = hasMultipleTypes && !usedTypes.has(slot.typeName);
-
-    if (isNewDay || isNewType || picked.length >= 2) {
-      picked.push({ start: slot.start, end: slot.end, typeName: slot.typeName });
-      usedDays.add(dateKey);
-      usedTypes.add(slot.typeName);
-    }
-  }
-
-  // Backfill if needed
-  if (picked.length < 3) {
-    for (const slot of viable) {
-      if (picked.length >= 3) break;
-      if (!picked.some(p => p.start.getTime() === slot.start.getTime())) {
-        picked.push({ start: slot.start, end: slot.end, typeName: slot.typeName });
-      }
-    }
-  }
+  const picked = slots.slice(0, 3);
 
   // Build labels only when slots come from multiple types
-  const distinctTypes = new Set(picked.map(p => p.typeName).filter(Boolean));
+  const distinctTypes = new Set(picked.map(p => p.meetingTypeName).filter(Boolean));
   const showLabels = distinctTypes.size > 1;
 
   const formatted = picked
     .map((s, i) => {
-      const label = showLabels && s.typeName ? ` (${s.typeName.toLowerCase()})` : "";
+      const label = showLabels && s.meetingTypeName ? ` (${s.meetingTypeName.toLowerCase()})` : "";
       return `${i + 1}. ${formatSlot(s.start, s.end, tz)}${label}`;
     })
     .join("\n");
 
   const raw = picked.map((s) => formatSlot(s.start, s.end, tz));
-  const typeLabels = showLabels ? picked.map(p => p.typeName) : undefined;
+  const typeLabels = showLabels ? picked.map(p => p.meetingTypeName ?? "") : undefined;
 
   return { formatted, raw, typeLabels };
-}
-
-/** Parse "HH:MM" time string to minutes since midnight. */
-function parseTimeToMinutes(time: string): number {
-  const [h, m] = time.split(":").map(Number);
-  return h * 60 + (m || 0);
 }
 
 /** Build a ComposerContext appropriate for the intent in simulation mode. */

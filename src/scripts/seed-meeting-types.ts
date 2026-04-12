@@ -1,11 +1,16 @@
 import "dotenv/config";
 import { eq } from "drizzle-orm";
-import { db } from "../db/index.js";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import * as schema from "../db/schema.js";
 import { users, meetingTypes } from "../db/schema.js";
+
+const client = postgres(process.env.DATABASE_URL!);
+const db = drizzle(client, { schema });
 
 const DEFAULT_MEETING_TYPES = [
   { name: "Coffee", isOnline: false, defaultDuration: 60, isDefault: false },
-  { name: "Video Call", isOnline: true, defaultDuration: 30, isDefault: true },
+  { name: "Video Call", isOnline: true, defaultDuration: 30, isDefault: true, addGoogleMeet: true },
   { name: "Lunch", isOnline: false, defaultDuration: 60, isDefault: false },
   { name: "Quick Chat", isOnline: true, defaultDuration: 15, isDefault: false },
   { name: "Phone Call", isOnline: true, defaultDuration: 30, isDefault: false },

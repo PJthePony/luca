@@ -33,7 +33,7 @@ export interface BlockingEvent {
  */
 export async function findAvailableSlots(
   organizerId: string,
-  meetingId: string,
+  meetingId: string | null,
   durationMin: number,
   timePreferences: TimePreference[],
   searchDays: number = 10,
@@ -54,11 +54,6 @@ export async function findAvailableSlots(
     where: eq(availabilityRules.userId, organizerId),
   });
 
-  // Get all participants with calendar access
-  const meetingParticipants = await db.query.participants.findMany({
-    where: eq(participants.meetingId, meetingId),
-  });
-
   // Build calendar IDs for freeBusy query
   // Use userCalendars table if available, fall back to organizer email
   const orgCalendars = await db.query.userCalendars.findMany({
@@ -71,23 +66,27 @@ export async function findAvailableSlots(
         .map((c) => c.calendarId)
     : [organizer.email];
 
-  // Also add participant calendars
-  for (const p of meetingParticipants) {
-    if (p.userId) {
-      const pUser = await db.query.users.findFirst({
-        where: eq(users.id, p.userId),
-      });
-      if (pUser?.googleTokens) {
-        // Check if participant has synced calendars too
-        const pCalendars = await db.query.userCalendars.findMany({
-          where: eq(userCalendars.userId, p.userId),
+  // Also add participant calendars (skip if no meetingId, e.g. simulator)
+  if (meetingId) {
+    const meetingParticipants = await db.query.participants.findMany({
+      where: eq(participants.meetingId, meetingId),
+    });
+    for (const p of meetingParticipants) {
+      if (p.userId) {
+        const pUser = await db.query.users.findFirst({
+          where: eq(users.id, p.userId),
         });
-        if (pCalendars.length > 0) {
-          calendarIds.push(
-            ...pCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId),
-          );
-        } else {
-          calendarIds.push(pUser.email);
+        if (pUser?.googleTokens) {
+          const pCalendars = await db.query.userCalendars.findMany({
+            where: eq(userCalendars.userId, p.userId),
+          });
+          if (pCalendars.length > 0) {
+            calendarIds.push(
+              ...pCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId),
+            );
+          } else {
+            calendarIds.push(pUser.email);
+          }
         }
       }
     }
@@ -181,7 +180,7 @@ export async function findAvailableSlots(
  */
 export async function findAvailableSlotsMultiType(
   organizerId: string,
-  meetingId: string,
+  meetingId: string | null,
   typeIds: string[],
   timePreferences: TimePreference[],
   searchDays: number = 10,
@@ -201,11 +200,6 @@ export async function findAvailableSlotsMultiType(
     where: eq(availabilityRules.userId, organizerId),
   });
 
-  // Get all participants with calendar access
-  const meetingParticipants = await db.query.participants.findMany({
-    where: eq(participants.meetingId, meetingId),
-  });
-
   // Build calendar IDs for busy query
   const orgCalendars = await db.query.userCalendars.findMany({
     where: eq(userCalendars.userId, organizerId),
@@ -214,21 +208,27 @@ export async function findAvailableSlotsMultiType(
     ? orgCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId)
     : [organizer.email];
 
-  for (const p of meetingParticipants) {
-    if (p.userId) {
-      const pUser = await db.query.users.findFirst({
-        where: eq(users.id, p.userId),
-      });
-      if (pUser?.googleTokens) {
-        const pCalendars = await db.query.userCalendars.findMany({
-          where: eq(userCalendars.userId, p.userId),
+  // Also add participant calendars (skip if no meetingId, e.g. simulator)
+  if (meetingId) {
+    const meetingParticipants = await db.query.participants.findMany({
+      where: eq(participants.meetingId, meetingId),
+    });
+    for (const p of meetingParticipants) {
+      if (p.userId) {
+        const pUser = await db.query.users.findFirst({
+          where: eq(users.id, p.userId),
         });
-        if (pCalendars.length > 0) {
-          calendarIds.push(
-            ...pCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId),
-          );
-        } else {
-          calendarIds.push(pUser.email);
+        if (pUser?.googleTokens) {
+          const pCalendars = await db.query.userCalendars.findMany({
+            where: eq(userCalendars.userId, p.userId),
+          });
+          if (pCalendars.length > 0) {
+            calendarIds.push(
+              ...pCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId),
+            );
+          } else {
+            calendarIds.push(pUser.email);
+          }
         }
       }
     }
