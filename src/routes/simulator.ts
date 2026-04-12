@@ -317,7 +317,14 @@ simulatorRoutes.get("/", async (c) => {
           body: JSON.stringify({ recipientName, recipientEmail, subject, emailBody: body }),
         });
         const data = await res.json();
-        if (!res.ok) { startStatus.textContent = 'Error: ' + (data.error || 'Unknown'); return; }
+        if (!res.ok) {
+          if (data.authError && data.reconnectUrl) {
+            startStatus.innerHTML = 'Google Calendar connection expired. <a href="' + data.reconnectUrl + '" style="color: var(--nxb-color-primary); font-weight: 600;">Reconnect Google Calendar</a>';
+          } else {
+            startStatus.textContent = 'Error: ' + (data.error || 'Unknown');
+          }
+          return;
+        }
 
         sessionId = data.sessionId;
         lucaEmail = data.lucaEmail || lucaEmail;
@@ -387,7 +394,15 @@ simulatorRoutes.get("/", async (c) => {
           body: JSON.stringify({ sessionId, emailBody: body }),
         });
         const data = await res.json();
-        if (!res.ok) { status.textContent = 'Error: ' + (data.error || 'Unknown'); btn.disabled = false; return; }
+        if (!res.ok) {
+          if (data.authError && data.reconnectUrl) {
+            status.innerHTML = 'Google Calendar expired. <a href="' + data.reconnectUrl + '" style="color: var(--nxb-color-primary); font-weight: 600;">Reconnect</a>';
+          } else {
+            status.textContent = 'Error: ' + (data.error || 'Unknown');
+          }
+          btn.disabled = false;
+          return;
+        }
 
         // Luca replies to the recipient
         addMessage(lucaAddr, recipAddr, '', data.composedText, 'outbound');
@@ -655,10 +670,14 @@ simulatorRoutes.post("/run", async (c) => {
     });
   } catch (err) {
     console.error("Simulator error:", err);
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    const isAuthError = msg.includes("invalid_grant") || msg.includes("Invalid Credentials") || msg.includes("No Google Calendar connected");
     return c.json({
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: msg,
+      authError: isAuthError,
+      reconnectUrl: isAuthError ? `/auth/google?userId=${organizer.id}` : undefined,
       timing: { total: `${Date.now() - totalStart}ms` },
-    }, 500);
+    }, isAuthError ? 401 : 500);
   }
 });
 
@@ -791,10 +810,14 @@ simulatorRoutes.post("/reply", async (c) => {
     });
   } catch (err) {
     console.error("Simulator reply error:", err);
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    const isAuthError = msg.includes("invalid_grant") || msg.includes("Invalid Credentials") || msg.includes("No Google Calendar connected");
     return c.json({
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: msg,
+      authError: isAuthError,
+      reconnectUrl: isAuthError ? `/auth/google?userId=${session.organizerId}` : undefined,
       timing: { total: `${Date.now() - totalStart}ms` },
-    }, 500);
+    }, isAuthError ? 401 : 500);
   }
 });
 
