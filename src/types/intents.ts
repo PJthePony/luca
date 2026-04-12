@@ -75,6 +75,8 @@ export interface ComposerContext {
   organizerName?: string;
   participantNames?: string[];
   noSlotsMessage?: string;
+  /** When returned slots don't match the recipient's requested time window */
+  preferencesMismatchNote?: string;
   originalEmailSummary?: string;
   senderName?: string;
   slotTypeLabels?: string[];

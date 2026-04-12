@@ -751,6 +751,8 @@ simulatorRoutes.post("/reply", async (c) => {
     ];
 
     let replySlots: { formatted: string; raw: string[]; typeLabels?: string[] } | undefined;
+    let preferencesMismatchNote: string | undefined;
+
     if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times" || extracted.intent === "propose_alternatives") {
       const slotsStart = Date.now();
       let realSlots: ProposedSlot[];
@@ -765,6 +767,31 @@ simulatorRoutes.post("/reply", async (c) => {
       }
       timing.slotSearch = `${Date.now() - slotsStart}ms`;
       replySlots = formatRealSlots(realSlots, session.tz);
+
+      // Check if returned slots actually match the recipient's "prefer" preferences
+      // If recipient asked for specific times and none of the slots overlap, flag it
+      const recipientPrefers = (extracted.time_preferences ?? []).filter(p => p.type === "prefer");
+      if (recipientPrefers.length > 0 && realSlots.length > 0) {
+        const anyMatch = realSlots.slice(0, 3).some(slot => {
+          return recipientPrefers.some(pref => {
+            if (pref.start && pref.end) {
+              const prefStart = new Date(pref.start);
+              const prefEnd = new Date(pref.end);
+              return slot.start < prefEnd && slot.end > prefStart;
+            }
+            return false;
+          });
+        });
+
+        if (!anyMatch) {
+          // Build a description of what the recipient wanted
+          const wantedDesc = recipientPrefers.map(p => p.description).filter(Boolean).join(", ");
+          preferencesMismatchNote = `The recipient requested "${wantedDesc}" but NONE of the available slots fall within that window. `
+            + `This is likely because the meeting type constraints (e.g., coffee is only available during certain hours) don't overlap with the requested times. `
+            + `You MUST be honest about this. Tell the recipient that those specific times aren't available, show the closest alternatives you have, and ask if a different day or time would work. `
+            + `Do NOT pretend these slots match what they asked for.`;
+        }
+      }
     }
 
     const composerCtx = buildSimComposerContext(extracted.intent, {
@@ -778,6 +805,7 @@ simulatorRoutes.post("/reply", async (c) => {
       selectedTime: extracted.selected_time,
       tz: session.tz,
       originalEmailSummary: extracted.meeting_context_summary,
+      preferencesMismatchNote,
     });
 
     // Update meeting status based on intent
@@ -906,6 +934,7 @@ function buildSimComposerContext(
     selectedTime?: { start: string; end: string };
     tz?: string;
     originalEmailSummary?: string;
+    preferencesMismatchNote?: string;
   },
 ): ComposerContext {
   const base: ComposerContext = {
@@ -916,6 +945,7 @@ function buildSimComposerContext(
     senderName: opts.senderName,
     originalEmailSummary: opts.originalEmailSummary,
     ...(opts.slotTypeLabels ? { slotTypeLabels: opts.slotTypeLabels } : {}),
+    ...(opts.preferencesMismatchNote ? { preferencesMismatchNote: opts.preferencesMismatchNote } : {}),
   };
 
   switch (intent) {

@@ -514,10 +514,32 @@ export async function handleAskForMoreTimes(ctx: IntentContext): Promise<IntentH
       .map((s, i) => `${i + 1}. ${formatSlot(s.startTime, s.endTime, tz)}`)
       .join("\n");
 
+    // Check if returned slots match the recipient's preferred time window
+    let preferencesMismatchNote: string | undefined;
+    const recipientPrefers = (extracted.time_preferences ?? []).filter(p => p.type === "prefer");
+    if (recipientPrefers.length > 0) {
+      const anyMatch = moreSlots.slice(0, 3).some(slot =>
+        recipientPrefers.some(pref => {
+          if (pref.start && pref.end) {
+            const prefStart = new Date(pref.start);
+            const prefEnd = new Date(pref.end);
+            return slot.start < prefEnd && slot.end > prefStart;
+          }
+          return false;
+        }),
+      );
+      if (!anyMatch) {
+        const wantedDesc = recipientPrefers.map(p => p.description).filter(Boolean).join(", ");
+        preferencesMismatchNote = `The recipient requested "${wantedDesc}" but none of the available slots fall within that window. `
+          + `Be honest: tell them those times aren't available, show the closest alternatives, and ask if a different day or time would work.`;
+      }
+    }
+
     return {
       composerContext: {
         intent: "ask_for_more_times",
         formattedSlots,
+        preferencesMismatchNote,
         pickerLink: `${env.APP_URL}/meeting/${meeting.shortId}`,
         meetingTitle: meeting.title ?? emailSubject,
         organizerName: organizer.name,

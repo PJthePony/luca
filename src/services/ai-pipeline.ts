@@ -297,6 +297,9 @@ export async function composeEmail(
   if (composerCtx.noSlotsMessage) {
     sections.push(`NO SLOTS MESSAGE: ${composerCtx.noSlotsMessage}`);
   }
+  if (composerCtx.preferencesMismatchNote) {
+    sections.push(`PREFERENCES MISMATCH: ${composerCtx.preferencesMismatchNote}`);
+  }
 
   const factualContent = sections.length > 0
     ? `\n\nFACTUAL CONTENT THAT MUST APPEAR IN THE EMAIL:\n${sections.join("\n\n")}`
