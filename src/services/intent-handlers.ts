@@ -91,7 +91,6 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<IntentHandl
   }
 
   // Resolve meeting type(s) from AI inference
-  let effectiveDuration = extracted.meeting_details.duration_minutes ?? 30;
   const aiMeetingTypeIds = extracted.meeting_details.meeting_type_ids
     ?? (extracted.meeting_details.meeting_type_id ? [extracted.meeting_details.meeting_type_id] : []);
   const matchedTypeIds: string[] = [];
@@ -112,6 +111,10 @@ export async function handleScheduleNew(ctx: IntentContext): Promise<IntentHandl
       if (!primaryType) primaryType = mType;
     }
   }
+
+  // Use meeting type's default duration, not hardcoded 30
+  let effectiveDuration = extracted.meeting_details.duration_minutes
+    ?? primaryType?.defaultDuration ?? 30;
 
   // Fall back to default type if no matches
   if (matchedTypeIds.length === 0) {
@@ -530,8 +533,41 @@ export async function handleAskForMoreTimes(ctx: IntentContext): Promise<IntentH
       );
       if (!anyMatch) {
         const wantedDesc = recipientPrefers.map(p => p.description).filter(Boolean).join(", ");
+
+        // Check if other meeting types have availability in the requested window
+        const allTypes = await db.query.meetingTypes.findMany({
+          where: eq(meetingTypes.userId, organizer.id),
+        });
+        const otherTypeIds = allTypes.map(t => t.id).filter(id => id !== meeting.meetingTypeId);
+        let typeSwitchSuggestion = "";
+
+        if (otherTypeIds.length > 0 && tokens) {
+          try {
+            const altSlots = await findAvailableSlotsMultiType(
+              organizer.id, null, otherTypeIds, extracted.time_preferences, 14,
+            );
+            const matchingAlt = altSlots.filter(slot =>
+              recipientPrefers.some(pref => {
+                if (pref.start && pref.end) {
+                  return slot.start < new Date(pref.end) && slot.end > new Date(pref.start);
+                }
+                return false;
+              }),
+            );
+            if (matchingAlt.length > 0) {
+              const altTypeNames = [...new Set(matchingAlt.map(s => s.meetingTypeName).filter(Boolean))];
+              const currentTypeName = allTypes.find(t => t.id === meeting.meetingTypeId)?.name ?? "this meeting type";
+              typeSwitchSuggestion = ` However, there IS availability for: ${altTypeNames.join(", ")}. `
+                + `Suggest switching — e.g., "I don't have ${currentTypeName.toLowerCase()} availability at that time, but I could offer a ${altTypeNames[0]?.toLowerCase()} instead?"`;
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+
         preferencesMismatchNote = `The recipient requested "${wantedDesc}" but none of the available slots fall within that window. `
-          + `Be honest: tell them those times aren't available, show the closest alternatives, and ask if a different day or time would work.`;
+          + `Be honest: tell them those times aren't available, show the closest alternatives, and ask if a different day or time would work.`
+          + typeSwitchSuggestion;
       }
     }
 

@@ -329,7 +329,9 @@ RULES:
 5. Be concise. No filler. No exclamation marks. Professional but warm.
 6. NEVER invent times, dates, names, or links. Use ONLY what is provided.
 7. Do NOT mention the organizer by name in the email — they are silently BCC'd.
-8. If this is a freeform/unrelated message, write a helpful but brief response.`;
+8. If this is a freeform/unrelated message, write a helpful but brief response.
+9. ATTRIBUTION: Luca works for ${composerCtx.organizerName ?? "the organizer"}. When explaining why times aren't available, say "${composerCtx.organizerName ?? "the organizer"}'s calendar" or just "the calendar." NEVER say "scheduling constraints on the other side" or imply a mysterious third party — you ARE the organizer's assistant.
+10. PREFERENCES MISMATCH: If the factual content includes a "PREFERENCES MISMATCH" note, be honest. Tell the recipient that their requested times aren't available on the calendar, present the closest alternatives, and ask if those or a different day would work. Do NOT pretend the alternatives match what they asked for.`;
 
   // Build messages — on retries, use multi-turn so the model sees its
   // own previous draft and the QC feedback as a natural conversation.
@@ -463,6 +465,17 @@ IMPORTANT — do NOT flag these as issues:
 - The email being addressed to the recipient (not the organizer) — this is correct, Luca always writes to the recipient.
 - The organizer not being mentioned by name — they are silently BCC'd.
 
+PREFERENCES MISMATCH HANDLING:
+When the COMPOSER CONTEXT includes a "preferences mismatch" note, it means the recipient asked for times that don't overlap with available slots (e.g., they want late morning but the meeting type only allows early morning). In this case:
+- The composer SHOULD be honest that the requested times aren't available
+- The composer SHOULD show closest available alternatives
+- The composer SHOULD ask if different times would work
+- Do NOT fail the draft just because the offered slots don't match the recipient's request — that's the whole point, those are the BEST AVAILABLE alternatives
+- DO fail if the draft pretends the slots match the request (e.g., "Here are late morning options:" followed by 9 AM slots)
+
+ATTRIBUTION:
+- Luca works for ${composerCtx.organizerName ?? "the organizer"}. It should NEVER say "scheduling constraints on the other side" or imply there's some mysterious third party. The calendar belongs to ${composerCtx.organizerName ?? "the organizer"}, and Luca should say "P.J.'s calendar" or just "the calendar" when explaining availability.
+
 If EVERYTHING looks good, mark as "pass" with empty issues.
 If ANY issue is found, mark as "fail" and describe each issue clearly.
 If you have questions that need the organizer's input, list them in "questions".
@@ -488,6 +501,8 @@ ${composerCtx.rescheduleLink ? `- Reschedule link: ${composerCtx.rescheduleLink}
 ${composerCtx.locationOptions ? `- Location options: ${composerCtx.locationOptions}` : ""}
 ${composerCtx.meetNote ? `- Meet note: ${composerCtx.meetNote}` : ""}
 ${composerCtx.phoneNote ? `- Phone note: ${composerCtx.phoneNote}` : ""}
+${composerCtx.noSlotsMessage ? `- No slots message: ${composerCtx.noSlotsMessage}` : ""}
+${composerCtx.preferencesMismatchNote ? `- PREFERENCES MISMATCH: ${composerCtx.preferencesMismatchNote}` : ""}
 
 ${threadHistory ? `FULL THREAD HISTORY:\n${threadHistory}` : "No prior messages in thread."}`;
 

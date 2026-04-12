@@ -601,7 +601,10 @@ simulatorRoutes.post("/run", async (c) => {
     // Use REAL availability from Google Calendar + meeting type constraints
     const typeIds = extracted.meeting_details.meeting_type_ids
       ?? (extracted.meeting_details.meeting_type_id ? [extracted.meeting_details.meeting_type_id] : []);
-    const duration = extracted.meeting_details.duration_minutes ?? 30;
+
+    // Resolve duration from meeting type (don't default to 30 — use the type's configured duration)
+    const primaryType = typeIds.length > 0 ? userTypes.find((t) => t.id === typeIds[0]) : undefined;
+    const duration = extracted.meeting_details.duration_minutes ?? primaryType?.defaultDuration ?? 30;
 
     const slotsStart = Date.now();
     let realSlots: ProposedSlot[];
@@ -742,7 +745,8 @@ simulatorRoutes.post("/reply", async (c) => {
     // Use REAL availability for slot generation
     const typeIds = extracted.meeting_details.meeting_type_ids
       ?? (extracted.meeting_details.meeting_type_id ? [extracted.meeting_details.meeting_type_id] : []);
-    const duration = extracted.meeting_details.duration_minutes ?? 30;
+    const primaryType = typeIds.length > 0 ? userTypes.find((t) => t.id === typeIds[0]) : undefined;
+    const duration = extracted.meeting_details.duration_minutes ?? primaryType?.defaultDuration ?? 30;
 
     // Merge organizer's original preferences with the recipient's new preferences
     const mergedPreferences = [
@@ -784,12 +788,61 @@ simulatorRoutes.post("/reply", async (c) => {
         });
 
         if (!anyMatch) {
-          // Build a description of what the recipient wanted
           const wantedDesc = recipientPrefers.map(p => p.description).filter(Boolean).join(", ");
-          preferencesMismatchNote = `The recipient requested "${wantedDesc}" but NONE of the available slots fall within that window. `
-            + `This is likely because the meeting type constraints (e.g., coffee is only available during certain hours) don't overlap with the requested times. `
-            + `You MUST be honest about this. Tell the recipient that those specific times aren't available, show the closest alternatives you have, and ask if a different day or time would work. `
-            + `Do NOT pretend these slots match what they asked for.`;
+
+          // Check if OTHER meeting types have slots in the requested window
+          const allTypeIds = userTypes.map(t => t.id);
+          const otherTypeIds = allTypeIds.filter(id => !typeIds.includes(id));
+          let typeSwitchSuggestion = "";
+
+          if (otherTypeIds.length > 0) {
+            try {
+              const altSlots = await findAvailableSlotsMultiType(
+                session.organizerId, null, otherTypeIds, mergedPreferences, 14,
+              );
+              const matchingAltSlots = altSlots.filter(slot =>
+                recipientPrefers.some(pref => {
+                  if (pref.start && pref.end) {
+                    return slot.start < new Date(pref.end) && slot.end > new Date(pref.start);
+                  }
+                  return false;
+                }),
+              );
+              if (matchingAltSlots.length > 0) {
+                const altTypeNames = [...new Set(matchingAltSlots.map(s => s.meetingTypeName).filter(Boolean))];
+                typeSwitchSuggestion = ` However, there IS availability during that window for other meeting types: ${altTypeNames.join(", ")}. `
+                  + `You could suggest switching — e.g., "I don't have coffee availability at that time, but I could offer a ${altTypeNames[0]?.toLowerCase()} instead if that works?"`;
+              }
+            } catch {
+              // Non-fatal — just skip the suggestion
+            }
+          }
+
+          preferencesMismatchNote = `The recipient requested "${wantedDesc}" but NONE of the available ${primaryType?.name ?? "meeting"} slots fall within that window. `
+            + `The ${primaryType?.name ?? "meeting"} type is only available during certain hours. `
+            + `Be honest: tell them those times aren't available for ${primaryType?.name?.toLowerCase() ?? "this type of meeting"}, show the closest alternatives you have, and ask if a different time would work.`
+            + typeSwitchSuggestion;
+        }
+      }
+
+      // Timeline check: if meeting type is in-person and best slots are >7 days
+      // past the organizer's original preferred window, suggest going online
+      if (!preferencesMismatchNote && primaryType && !primaryType.isOnline && realSlots.length > 0) {
+        const orgPrefers = session.organizerPreferences.filter(p => p.type === "prefer" && p.end);
+        if (orgPrefers.length > 0) {
+          const latestPreferred = new Date(Math.max(...orgPrefers.map(p => new Date(p.end!).getTime())));
+          const sevenDaysLater = new Date(latestPreferred.getTime() + 7 * 24 * 60 * 60 * 1000);
+          const earliestSlot = realSlots[0].start;
+
+          if (earliestSlot > sevenDaysLater) {
+            const onlineTypes = userTypes.filter(t => t.isOnline);
+            if (onlineTypes.length > 0) {
+              const onlineNames = onlineTypes.map(t => t.name.toLowerCase()).join(" or ");
+              preferencesMismatchNote = `The earliest available ${primaryType.name.toLowerCase()} slot is more than a week past the originally requested timeframe. `
+                + `Consider suggesting to bring the meeting in sooner by switching to an online format (${onlineNames}). `
+                + `Frame it naturally: "The earliest I can find for an in-person ${primaryType.name.toLowerCase()} is [date]. Would you prefer to do a ${onlineNames} sooner instead?"`;
+            }
+          }
         }
       }
     }
