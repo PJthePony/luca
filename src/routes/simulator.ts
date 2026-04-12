@@ -158,6 +158,7 @@ simulatorRoutes.get("/", async (c) => {
           <textarea id="replyBody" placeholder="Type a reply..."></textarea>
           <div class="compose-controls">
             <button class="btn btn-primary" id="replyBtn" onclick="sendReply()">Reply as <span id="replyAsName">recipient</span></button>
+            <button class="btn" style="background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border);" onclick="copyContext()">Copy Context</button>
             <button class="btn btn-danger" onclick="resetConversation()">New Conversation</button>
             <span class="compose-status" id="replyStatus"></span>
           </div>
@@ -194,6 +195,9 @@ simulatorRoutes.get("/", async (c) => {
     let organizerEmail = '${user.email}';
     let subject = '';
     let lucaEmail = 'luca@${env.MAILGUN_DOMAIN}';
+
+    // Full conversation log for copy-to-clipboard
+    const conversationLog = [];
 
     function addMessage(msgFrom, msgTo, msgCc, body, type) {
       const messages = document.getElementById('threadMessages');
@@ -332,6 +336,27 @@ simulatorRoutes.get("/", async (c) => {
         // Show Luca's response to the recipient (bcc organizer)
         addMessage(lucaAddr, recipAddr, '', data.composedText, 'outbound');
 
+        // Log for copy context
+        conversationLog.push({
+          turn: 1,
+          type: 'organizer',
+          from: orgAddr,
+          to: recipAddr,
+          cc: lucaAddr,
+          body: body,
+        });
+        conversationLog.push({
+          turn: 1,
+          type: 'luca_response',
+          from: lucaAddr,
+          to: recipAddr,
+          body: data.composedText,
+          extracted: data.extracted,
+          composerContext: data.composerContext,
+          pipeline: data.pipeline,
+          timing: data.timing,
+        });
+
         updateInspector(data);
       } catch (err) {
         startStatus.textContent = 'Error: ' + err.message;
@@ -364,6 +389,28 @@ simulatorRoutes.get("/", async (c) => {
 
         // Luca replies to the recipient
         addMessage(lucaAddr, recipAddr, '', data.composedText, 'outbound');
+
+        // Log for copy context
+        var turnNum = Math.floor(conversationLog.length / 2) + 1;
+        conversationLog.push({
+          turn: turnNum,
+          type: 'recipient_reply',
+          from: recipAddr,
+          to: lucaAddr,
+          body: body,
+        });
+        conversationLog.push({
+          turn: turnNum,
+          type: 'luca_response',
+          from: lucaAddr,
+          to: recipAddr,
+          body: data.composedText,
+          extracted: data.extracted,
+          composerContext: data.composerContext,
+          pipeline: data.pipeline,
+          timing: data.timing,
+        });
+
         updateInspector(data);
         status.textContent = data.timing?.total || '';
       } catch (err) {
@@ -371,6 +418,66 @@ simulatorRoutes.get("/", async (c) => {
       }
 
       btn.disabled = false;
+    }
+
+    function copyContext() {
+      var lines = [];
+      lines.push('# Simulator Session');
+      lines.push('Subject: ' + subject);
+      lines.push('Organizer: ' + organizerName + ' <' + organizerEmail + '>');
+      lines.push('Recipient: ' + recipientName + ' <' + recipientEmail + '>');
+      lines.push('');
+
+      conversationLog.forEach(function(entry) {
+        lines.push('---');
+        if (entry.type === 'organizer') {
+          lines.push('## ' + organizerName + ' → ' + recipientName + ' (CC Luca)');
+          lines.push(entry.body);
+        } else if (entry.type === 'recipient_reply') {
+          lines.push('## ' + recipientName + ' → Luca');
+          lines.push(entry.body);
+        } else if (entry.type === 'luca_response') {
+          lines.push('## Luca → ' + recipientName);
+          lines.push(entry.body);
+          lines.push('');
+          lines.push('### Extractor Output');
+          lines.push('\`\`\`json');
+          lines.push(JSON.stringify(entry.extracted, null, 2));
+          lines.push('\`\`\`');
+          lines.push('');
+          lines.push('### Composer Context');
+          lines.push('\`\`\`json');
+          lines.push(JSON.stringify(entry.composerContext, null, 2));
+          lines.push('\`\`\`');
+          if (entry.pipeline) {
+            var p = entry.pipeline;
+            lines.push('');
+            lines.push('### Pipeline (' + (p.attempts || []).length + ' attempt(s), ' + (p.passed ? 'PASSED' : 'FAILED') + ')');
+            (p.attempts || []).forEach(function(a) {
+              lines.push('');
+              lines.push('**Attempt ' + a.attempt + '** — QC: ' + a.qcResult.verdict);
+              if (a.qcResult.issues && a.qcResult.issues.length) lines.push('Issues: ' + a.qcResult.issues.join('; '));
+              if (a.qcResult.suggestions && a.qcResult.suggestions.length) lines.push('Suggestions: ' + a.qcResult.suggestions.join('; '));
+              if (a.qcResult.questions && a.qcResult.questions.length) lines.push('Questions: ' + a.qcResult.questions.join('; '));
+              lines.push('Draft:');
+              lines.push(a.composedText);
+            });
+          }
+          if (entry.timing) {
+            lines.push('');
+            lines.push('### Timing');
+            lines.push(JSON.stringify(entry.timing));
+          }
+        }
+        lines.push('');
+      });
+
+      var text = lines.join(String.fromCharCode(10));
+      navigator.clipboard.writeText(text).then(function() {
+        var status = document.getElementById('replyStatus');
+        status.textContent = 'Copied!';
+        setTimeout(function() { status.textContent = ''; }, 2000);
+      });
     }
 
     function resetConversation() {
