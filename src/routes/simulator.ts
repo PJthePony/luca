@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { meetings, emailThreads, emailMessages, participants, users, meetingTypes, availabilityRules } from "../db/schema.js";
 import { extractIntent, runComposeQCLoop } from "../services/ai-pipeline.js";
 import type { PipelineResult } from "../services/ai-pipeline.js";
-import { formatSlot } from "../services/intent-handlers.js";
+import { formatSlot, isOrganizerFree } from "../services/intent-handlers.js";
 import { findAvailableSlots, findAvailableSlotsMultiType } from "../services/slot-proposer.js";
 import type { ProposedSlot } from "../services/slot-proposer.js";
 import type { ComposerContext, TimePreference } from "../types/index.js";
@@ -756,6 +756,60 @@ simulatorRoutes.post("/reply", async (c) => {
 
     let replySlots: { formatted: string; raw: string[]; typeLabels?: string[] } | undefined;
     let preferencesMismatchNote: string | undefined;
+    let autoBooked = false;
+
+    // Auto-book: if the recipient proposed a specific time, check if organizer is free
+    if (extracted.intent === "propose_alternatives" && extracted.selected_time) {
+      const proposedStart = new Date(extracted.selected_time.start);
+      const proposedEnd = new Date(extracted.selected_time.end);
+      try {
+        const organizer = await db.query.users.findFirst({ where: eq(users.id, session.organizerId) });
+        if (organizer?.googleTokens) {
+          const free = await isOrganizerFree(
+            session.organizerId,
+            organizer.googleTokens as import("../types/index.js").GoogleTokens,
+            proposedStart,
+            proposedEnd,
+          );
+          if (free) {
+            autoBooked = true;
+            session.meetingStatus = "confirmed";
+          }
+        }
+      } catch (err) {
+        console.warn("Auto-book check failed, falling back to slot search:", err);
+      }
+    }
+
+    if (autoBooked && extracted.selected_time) {
+      // Skip slot generation — go straight to confirmation
+      const composerCtx = buildSimComposerContext("confirm_time", {
+        meetingTitle: `Meeting with ${session.recipientName}`,
+        organizerName: session.organizerName,
+        participantNames: [session.recipientName || session.recipientEmail.split("@")[0]],
+        senderName: session.recipientName,
+        selectedTime: extracted.selected_time,
+        tz: session.tz,
+        originalEmailSummary: extracted.meeting_context_summary,
+      });
+
+      const threadHistoryForCompose = session.threadHistory.join("\n---\n");
+      const loopStart = Date.now();
+      const pipelineResult = await runComposeQCLoop(extracted, composerCtx, threadHistoryForCompose);
+      timing.composeQCLoop = `${Date.now() - loopStart}ms`;
+      timing.total = `${Date.now() - totalStart}ms`;
+
+      session.threadHistory.push(`[outbound] From: Luca\nTo: ${session.recipientName} <${session.recipientEmail}>\n${pipelineResult.finalText}`);
+      session.lastLucaResponse = pipelineResult.finalText;
+
+      return c.json({
+        extracted,
+        composerContext: composerCtx,
+        composedText: pipelineResult.finalText,
+        pipeline: pipelineResult,
+        timing,
+      });
+    }
 
     if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times" || extracted.intent === "propose_alternatives") {
       const slotsStart = Date.now();
@@ -827,20 +881,26 @@ simulatorRoutes.post("/reply", async (c) => {
 
       // Timeline check: if meeting type is in-person and best slots are >7 days
       // past the organizer's original preferred window, suggest going online
-      if (!preferencesMismatchNote && primaryType && !primaryType.isOnline && realSlots.length > 0) {
+      // Runs independently of the time-of-day mismatch check above
+      if (primaryType && !primaryType.isOnline && realSlots.length > 0) {
         const orgPrefers = session.organizerPreferences.filter(p => p.type === "prefer" && p.end);
         if (orgPrefers.length > 0) {
           const latestPreferred = new Date(Math.max(...orgPrefers.map(p => new Date(p.end!).getTime())));
           const sevenDaysLater = new Date(latestPreferred.getTime() + 7 * 24 * 60 * 60 * 1000);
-          const earliestSlot = realSlots[0].start;
+          const sortedSlots = [...realSlots].sort((a, b) => a.start.getTime() - b.start.getTime());
+          const earliestSlot = sortedSlots[0].start;
 
           if (earliestSlot > sevenDaysLater) {
             const onlineTypes = userTypes.filter(t => t.isOnline);
             if (onlineTypes.length > 0) {
               const onlineNames = onlineTypes.map(t => t.name.toLowerCase()).join(" or ");
-              preferencesMismatchNote = `The earliest available ${primaryType.name.toLowerCase()} slot is more than a week past the originally requested timeframe. `
-                + `Consider suggesting to bring the meeting in sooner by switching to an online format (${onlineNames}). `
+              const timelineNote = `The earliest available ${primaryType.name.toLowerCase()} slot is more than a week past the originally requested timeframe. `
+                + `Suggest bringing the meeting in sooner by switching to an online format (${onlineNames}). `
                 + `Frame it naturally: "The earliest I can find for an in-person ${primaryType.name.toLowerCase()} is [date]. Would you prefer to do a ${onlineNames} sooner instead?"`;
+              // Append to existing mismatch note or set as new
+              preferencesMismatchNote = preferencesMismatchNote
+                ? preferencesMismatchNote + " " + timelineNote
+                : timelineNote;
             }
           }
         }
@@ -954,7 +1014,9 @@ function formatRealSlots(
   slots: ProposedSlot[],
   tz: string,
 ): { formatted: string; raw: string[]; typeLabels?: string[] } {
-  const picked = slots.slice(0, 3);
+  // Sort chronologically before picking top 3
+  const sorted = [...slots].sort((a, b) => a.start.getTime() - b.start.getTime());
+  const picked = sorted.slice(0, 3);
 
   // Build labels only when slots come from multiple types
   const distinctTypes = new Set(picked.map(p => p.meetingTypeName).filter(Boolean));

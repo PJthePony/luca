@@ -717,11 +717,12 @@ function applyHardFilter(
   let result = slots;
 
   // Step 1: Hard-exclude "unavailable" and "avoid" preferences
+  // These NEVER fall back — if a time is declared unavailable, respect it absolutely
   const excludePrefs = timePreferences.filter(
     (p) => p.type === "unavailable" || p.type === "avoid",
   );
   if (excludePrefs.length > 0) {
-    result = result.filter((slot) => {
+    const excluded = result.filter((slot) => {
       const slotDow = getLocalDayOfWeek(slot.start, tz);
       const slotMinutes = getLocalHour(slot.start, tz) * 60 + getLocalMinute(slot.start, tz);
 
@@ -745,6 +746,9 @@ function applyHardFilter(
         return false;
       });
     });
+    // Unlike "prefer" filtering, unavailable/avoid NEVER falls back.
+    // If all slots are excluded, return empty — the caller handles "no slots" gracefully.
+    result = excluded;
   }
 
   // Step 2: Hard-include by "prefer" and "available" preferences

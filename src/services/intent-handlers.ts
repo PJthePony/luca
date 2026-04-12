@@ -41,7 +41,7 @@ export function formatTime(date: Date, tz: string): string {
 }
 
 /** Check if the organizer is free during a specific time window. */
-async function isOrganizerFree(
+export async function isOrganizerFree(
   organizerId: string,
   tokens: GoogleTokens,
   start: Date,
