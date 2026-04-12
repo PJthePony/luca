@@ -712,7 +712,7 @@ simulatorRoutes.post("/reply", async (c) => {
 
     // Build context based on detected intent
     let replySlots: { formatted: string; raw: string[]; typeLabels?: string[] } | undefined;
-    if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times") {
+    if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times" || extracted.intent === "propose_alternatives") {
       replySlots = generateSimSlots(session.tz, extracted.time_preferences, resolvedTypes);
     }
 
@@ -724,13 +724,15 @@ simulatorRoutes.post("/reply", async (c) => {
       formattedSlots: replySlots?.formatted,
       slotTypeLabels: replySlots?.typeLabels,
       proposedSlots: session.proposedSlots,
+      selectedTime: extracted.selected_time,
+      tz: session.tz,
       originalEmailSummary: extracted.meeting_context_summary,
     });
 
     // Update meeting status based on intent
     if (extracted.intent === "confirm_time") {
       session.meetingStatus = "confirmed";
-    } else if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times") {
+    } else if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times" || extracted.intent === "propose_alternatives") {
       session.meetingStatus = "proposed";
       session.proposedSlots = replySlots?.raw ?? generateSimSlots(session.tz, extracted.time_preferences, resolvedTypes).raw;
     } else if (extracted.intent === "decline") {
@@ -975,6 +977,8 @@ function buildSimComposerContext(
     formattedSlots?: string;
     slotTypeLabels?: string[];
     proposedSlots?: string[];
+    selectedTime?: { start: string; end: string };
+    tz?: string;
     originalEmailSummary?: string;
   },
 ): ComposerContext {
@@ -995,13 +999,20 @@ function buildSimComposerContext(
         formattedSlots: opts.formattedSlots,
         pickerLink: `${env.APP_URL}/meeting/sim-test`,
       };
-    case "confirm_time":
+    case "confirm_time": {
+      let confirmedTime = opts.proposedSlots?.[0] ?? "Wednesday at 2:00 PM";
+      // If we have the actual selected time from the extractor, format it properly
+      if (opts.selectedTime) {
+        const start = new Date(opts.selectedTime.start);
+        const end = new Date(opts.selectedTime.end);
+        confirmedTime = formatSlot(start, end, opts.tz ?? "America/New_York");
+      }
       return {
         ...base,
-        // Use first proposed slot as the "confirmed" time
-        confirmedTime: opts.proposedSlots?.[0] ?? "Wednesday at 2:00 PM",
+        confirmedTime,
         rescheduleLink: `${env.APP_URL}/meeting/sim-test`,
       };
+    }
     case "reschedule":
     case "ask_for_more_times":
     case "propose_alternatives":
