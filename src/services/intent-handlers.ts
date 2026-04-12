@@ -1,11 +1,12 @@
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { meetings, meetingLocations, meetingTypes, participants, proposedSlots } from "../db/schema.js";
+import { meetings, meetingLocations, meetingTypes, participants, proposedSlots, userCalendars, users } from "../db/schema.js";
 import { sendThreadedReply } from "./email.js";
 import { findAvailableSlots, findAvailableSlotsMultiType } from "./slot-proposer.js";
 import * as machine from "./meeting-machine.js";
 import { notifyUser } from "./notification.js";
 import { getAttendeeEmails, isVideoCallType } from "./queries.js";
+import * as gcal from "../lib/google.js";
 import type { ExtractedData, ComposerContext, IntentHandlerResult } from "../types/index.js";
 import type { GoogleTokens } from "../types/index.js";
 import { env } from "../config.js";
@@ -37,6 +38,28 @@ export function formatTime(date: Date, tz: string): string {
   const d = date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz });
   const t = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
   return `${d} at ${t}`;
+}
+
+/** Check if the organizer is free during a specific time window. */
+async function isOrganizerFree(
+  organizerId: string,
+  tokens: GoogleTokens,
+  start: Date,
+  end: Date,
+): Promise<boolean> {
+  const orgCalendars = await db.query.userCalendars.findMany({
+    where: eq(userCalendars.userId, organizerId),
+  });
+  const organizer = await db.query.users.findFirst({
+    where: eq(users.id, organizerId),
+  });
+  const calendarIds = orgCalendars.length > 0
+    ? orgCalendars.filter((c) => c.checkForConflicts).map((c) => c.calendarId)
+    : [organizer?.email ?? "primary"];
+
+  const busyResults = await gcal.queryFreeBusy(tokens, calendarIds, start, end);
+  // Free if no busy periods overlap
+  return busyResults.every((cal) => cal.busy.length === 0);
 }
 
 // ── Shared Context ──────────────────────────────────────────────────────────
@@ -405,6 +428,61 @@ export async function handleAskForMoreTimes(ctx: IntentContext): Promise<IntentH
       fixedBcc: [organizer.email],
     };
   }
+
+  // ── Auto-book: if the recipient proposed a specific time and the organizer is free, book it ──
+  if (extracted.selected_time) {
+    const proposedStart = new Date(extracted.selected_time.start);
+    const proposedEnd = new Date(extracted.selected_time.end);
+
+    try {
+      const free = await isOrganizerFree(organizer.id, tokens, proposedStart, proposedEnd);
+      if (free) {
+        // The organizer is free — book the meeting at this time
+        if (meeting.status === "proposed") {
+          await machine.startRescheduling(meeting.id, tokens);
+        }
+
+        const altIsVideoCall = await isVideoCallType(meeting.meetingTypeId);
+
+        // Create a single slot and confirm it immediately
+        const result = await machine.proposeTimes(
+          meeting.id,
+          [{ start: proposedStart, end: proposedEnd }],
+          tokens,
+          meeting.title ?? emailSubject,
+          calendarDescription,
+          { addGoogleMeet: altIsVideoCall, timeZone: tz },
+        );
+
+        const slot = result.slots[0];
+        await machine.confirmSlot(meeting.id, slot.id, tokens);
+
+        const confirmedTime = formatTime(proposedStart, tz);
+
+        await notifyUser({
+          type: "meeting_confirmed",
+          userId: organizer.id,
+          meetingTitle: meeting.title ?? "Meeting",
+          meetingShortId: meeting.shortId,
+          confirmedTime,
+        });
+
+        return {
+          composerContext: {
+            intent: "confirm_time",
+            confirmedTime,
+            rescheduleLink: `${env.APP_URL}/meeting/${meeting.shortId}`,
+            meetingTitle: meeting.title ?? emailSubject,
+            organizerName: organizer.name,
+          },
+        };
+      }
+    } catch (err) {
+      console.warn("Auto-book availability check failed, falling back to new slots:", err);
+    }
+  }
+
+  // ── Standard flow: propose new slots ──
 
   // If currently proposed, start rescheduling first
   if (meeting.status === "proposed") {

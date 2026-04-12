@@ -36,7 +36,7 @@ function buildExtractorTool(): Anthropic.Tool {
             end: { type: "string", description: "ISO 8601 datetime" },
           },
           required: ["start", "end"],
-          description: "If confirming, the specific time slot selected",
+          description: "The specific time slot selected or proposed. Set this for 'confirm_time' (choosing a previously proposed slot) AND for 'propose_alternatives' when the recipient suggests a SPECIFIC date/time (e.g., 'How about Tuesday at 2?'). Use the meeting's default duration to calculate the end time.",
         },
         time_preferences: {
           type: "array",
