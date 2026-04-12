@@ -472,14 +472,22 @@ simulatorRoutes.post("/run", async (c) => {
     );
     timing.extract = `${Date.now() - extractStart}ms`;
 
+    // Resolve meeting type constraints for slot generation
+    const typeIds = extracted.meeting_details.meeting_type_ids
+      ?? (extracted.meeting_details.meeting_type_id ? [extracted.meeting_details.meeting_type_id] : []);
+    const resolvedTypes = typeIds.length > 0
+      ? userTypes.filter((t) => typeIds.includes(t.id))
+      : [];
+
     // Build simulated ComposerContext — Luca writes TO the recipient
-    const simSlots = generateSimSlots(tz, extracted.time_preferences);
+    const simSlots = generateSimSlots(tz, extracted.time_preferences, resolvedTypes);
     const composerCtx = buildSimComposerContext(extracted.intent, {
       meetingTitle: extracted.meeting_details.title ?? `Meeting with ${body.recipientName}`,
       organizerName: organizer.name,
       participantNames: [body.recipientName || body.recipientEmail.split("@")[0]],
       senderName: body.recipientName,
       formattedSlots: simSlots.formatted,
+      slotTypeLabels: simSlots.typeLabels,
       originalEmailSummary: extracted.meeting_context_summary,
     });
 
@@ -588,15 +596,26 @@ simulatorRoutes.post("/reply", async (c) => {
     );
     timing.extract = `${Date.now() - extractStart}ms`;
 
+    // Resolve meeting type constraints for slot generation
+    const typeIds = extracted.meeting_details.meeting_type_ids
+      ?? (extracted.meeting_details.meeting_type_id ? [extracted.meeting_details.meeting_type_id] : []);
+    const resolvedTypes = typeIds.length > 0
+      ? userTypes.filter((t) => typeIds.includes(t.id))
+      : [];
+
     // Build context based on detected intent
+    let replySlots: { formatted: string; raw: string[]; typeLabels?: string[] } | undefined;
+    if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times") {
+      replySlots = generateSimSlots(session.tz, extracted.time_preferences, resolvedTypes);
+    }
+
     const composerCtx = buildSimComposerContext(extracted.intent, {
       meetingTitle: `Meeting with ${session.recipientName}`,
       organizerName: session.organizerName,
       participantNames: [session.recipientName || session.recipientEmail.split("@")[0]],
       senderName: session.recipientName,
-      formattedSlots: extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times"
-        ? generateSimSlots(session.tz, extracted.time_preferences).formatted
-        : undefined,
+      formattedSlots: replySlots?.formatted,
+      slotTypeLabels: replySlots?.typeLabels,
       proposedSlots: session.proposedSlots,
       originalEmailSummary: extracted.meeting_context_summary,
     });
@@ -606,7 +625,7 @@ simulatorRoutes.post("/reply", async (c) => {
       session.meetingStatus = "confirmed";
     } else if (extracted.intent === "reschedule" || extracted.intent === "ask_for_more_times") {
       session.meetingStatus = "proposed";
-      session.proposedSlots = generateSimSlots(session.tz, extracted.time_preferences).raw;
+      session.proposedSlots = replySlots?.raw ?? generateSimSlots(session.tz, extracted.time_preferences, resolvedTypes).raw;
     } else if (extracted.intent === "decline") {
       session.meetingStatus = "cancelled";
     }
@@ -672,16 +691,41 @@ function getLocalDateParts(utcDate: Date, tz: string): { year: number; month: nu
   return { year, month, day, dayOfWeek: dowMap[weekday] ?? 0 };
 }
 
-/** Generate realistic simulated time slots that respect extracted time preferences. */
-function generateSimSlots(tz: string, timePreferences?: TimePreference[]): { formatted: string; raw: string[] } {
+interface MeetingTypeConstraint {
+  id: string;
+  name: string;
+  defaultDuration: number;
+  earliestTime: string | null;
+  latestTime: string | null;
+  allowedDays: number[] | null;
+}
+
+/** Generate realistic simulated time slots that respect extracted time preferences and meeting type constraints. */
+function generateSimSlots(
+  tz: string,
+  timePreferences?: TimePreference[],
+  meetingTypes?: MeetingTypeConstraint[],
+): { formatted: string; raw: string[]; typeLabels?: string[] } {
   const now = new Date();
   const prefs = timePreferences ?? [];
+  const types = meetingTypes ?? [];
+  const hasMultipleTypes = types.length > 1;
 
-  // Generate candidate slots across 14 days (enough to find good options)
-  const candidates: { start: Date; end: Date; score: number }[] = [];
-  const durationMs = 30 * 60 * 1000;
+  // Build type-specific time windows (or use defaults if no types)
+  const typeWindows = types.length > 0
+    ? types.map((t) => ({
+        id: t.id,
+        name: t.name,
+        duration: t.defaultDuration,
+        earliest: t.earliestTime ? parseTimeToMinutes(t.earliestTime) : 9 * 60,
+        latest: t.latestTime ? parseTimeToMinutes(t.latestTime) : 17 * 60,
+        allowedDays: t.allowedDays ?? [1, 2, 3, 4, 5],
+      }))
+    : [{ id: "", name: "", duration: 30, earliest: 9 * 60, latest: 17 * 60, allowedDays: [1, 2, 3, 4, 5] }];
 
-  // Get "tomorrow" in the organizer's timezone
+  // Generate candidate slots across 14 days
+  const candidates: { start: Date; end: Date; score: number; typeName: string }[] = [];
+
   const todayParts = getLocalDateParts(now, tz);
   const tomorrowBase = new Date(todayParts.year, todayParts.month, todayParts.day + 1);
 
@@ -693,109 +737,124 @@ function generateSimSlots(tz: string, timePreferences?: TimePreference[]): { for
     const month = localDate.getMonth();
     const day = localDate.getDate();
 
-    // Compute day-of-week in organizer's timezone
     const dayStartUtc = localTimeToUtc(year, month, day, 9, 0, tz);
     const { dayOfWeek } = getLocalDateParts(dayStartUtc, tz);
 
-    // Skip weekends
-    if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+    for (const tw of typeWindows) {
+      // Check if this day is allowed for this type
+      if (!tw.allowedDays.includes(dayOfWeek)) continue;
 
-    // Generate slots at 10 AM, 11 AM, 1 PM, 2 PM, 3 PM, 4 PM local time
-    const hours = [10, 11, 13, 14, 15, 16];
-    for (const h of hours) {
-      const start = localTimeToUtc(year, month, day, h, 0, tz);
-      const end = new Date(start.getTime() + durationMs);
+      // Generate hourly slots within the type's time window
+      const startHour = Math.floor(tw.earliest / 60);
+      const endHour = Math.floor(tw.latest / 60);
+      const durationMs = tw.duration * 60 * 1000;
 
-      // Skip slots in the past
-      if (start <= now) continue;
+      for (let h = startHour; h < endHour; h++) {
+        const start = localTimeToUtc(year, month, day, h, 0, tz);
+        const end = new Date(start.getTime() + durationMs);
 
-      let score = 100;
+        if (start <= now) continue;
 
-      // Score based on time preferences
-      for (const pref of prefs) {
-        // ISO date window matching
-        if (pref.start && pref.end) {
-          const prefStart = new Date(pref.start);
-          const prefEnd = new Date(pref.end);
-          const overlaps = start < prefEnd && end > prefStart;
+        // Check end time doesn't exceed latest
+        const endMinutes = h * 60 + tw.duration;
+        if (endMinutes > tw.latest) continue;
 
-          if (pref.type === "prefer" && overlaps) score += 50;
-          if (pref.type === "available" && overlaps) score += 30;
-          if (pref.type === "avoid" && overlaps) score -= 100;
-          if (pref.type === "unavailable" && overlaps) score -= 200;
+        let score = 100;
+
+        for (const pref of prefs) {
+          if (pref.start && pref.end) {
+            const prefStart = new Date(pref.start);
+            const prefEnd = new Date(pref.end);
+            const overlaps = start < prefEnd && end > prefStart;
+            if (pref.type === "prefer" && overlaps) score += 50;
+            if (pref.type === "available" && overlaps) score += 30;
+            if (pref.type === "avoid" && overlaps) score -= 100;
+            if (pref.type === "unavailable" && overlaps) score -= 200;
+          }
+
+          if (pref.dayOfWeek !== undefined && !pref.start) {
+            if (pref.type === "prefer" && dayOfWeek === pref.dayOfWeek) score += 40;
+            if (pref.type === "available" && dayOfWeek === pref.dayOfWeek) score += 25;
+            if (pref.type === "avoid" && dayOfWeek === pref.dayOfWeek) score -= 80;
+            if (pref.type === "unavailable" && dayOfWeek === pref.dayOfWeek) score -= 150;
+          }
+
+          if (pref.timeOfDayStart && pref.timeOfDayEnd && !pref.start) {
+            const [sh, sm] = pref.timeOfDayStart.split(":").map(Number);
+            const [eh, em] = pref.timeOfDayEnd.split(":").map(Number);
+            const slotMinutes = h * 60;
+            const inRange = slotMinutes >= sh * 60 + sm && slotMinutes < eh * 60 + em;
+            if (pref.type === "prefer" && inRange) score += 40;
+            if (pref.type === "available" && inRange) score += 25;
+            if (pref.type === "avoid" && inRange) score -= 100;
+            if (pref.type === "unavailable" && inRange) score -= 200;
+          }
         }
 
-        // Day-of-week matching (when no ISO dates)
-        if (pref.dayOfWeek !== undefined && !pref.start) {
-          if (pref.type === "prefer" && dayOfWeek === pref.dayOfWeek) score += 40;
-          if (pref.type === "available" && dayOfWeek === pref.dayOfWeek) score += 25;
-          if (pref.type === "avoid" && dayOfWeek === pref.dayOfWeek) score -= 80;
-          if (pref.type === "unavailable" && dayOfWeek === pref.dayOfWeek) score -= 150;
-        }
+        if (h >= 10 && h <= 14) score += 5;
+        score += Math.max(0, 3 - Math.floor(dayOffset / 2));
 
-        // Time-of-day matching (when no ISO dates)
-        if (pref.timeOfDayStart && pref.timeOfDayEnd && !pref.start) {
-          const [sh, sm] = pref.timeOfDayStart.split(":").map(Number);
-          const [eh, em] = pref.timeOfDayEnd.split(":").map(Number);
-          const slotMinutes = h * 60;
-          const inRange = slotMinutes >= sh * 60 + sm && slotMinutes < eh * 60 + em;
-
-          if (pref.type === "prefer" && inRange) score += 40;
-          if (pref.type === "available" && inRange) score += 25;
-          if (pref.type === "avoid" && inRange) score -= 100;
-          if (pref.type === "unavailable" && inRange) score -= 200;
-        }
+        candidates.push({ start, end, score, typeName: tw.name });
       }
-
-      // Prefer mid-day times
-      if (h >= 10 && h <= 14) score += 5;
-      // Prefer sooner
-      score += Math.max(0, 3 - Math.floor(dayOffset / 2));
-
-      candidates.push({ start, end, score });
     }
   }
 
-  // Hard-filter: remove slots with negative scores (unavailable/avoid)
+  // Hard-filter: remove slots with negative scores
   let viable = candidates.filter(c => c.score > 0);
-  if (viable.length === 0) viable = candidates; // fallback if filtering killed everything
+  if (viable.length === 0) viable = candidates;
 
-  // Sort by score descending
   viable.sort((a, b) => b.score - a.score);
 
-  // Pick top 3 from different days for diversity
-  const picked: { start: Date; end: Date }[] = [];
+  // Pick top 3, spreading across days and types for diversity
+  const picked: { start: Date; end: Date; typeName: string }[] = [];
   const usedDays = new Set<string>();
+  const usedTypes = new Set<string>();
+
+  // First pass: prioritize diversity across days AND types
   for (const slot of viable) {
     if (picked.length >= 3) break;
     const dateKey = slot.start.toLocaleDateString("en-US", { timeZone: tz });
-    // Allow max 1 slot per day for diversity, unless we can't fill 3
-    if (usedDays.has(dateKey) && picked.length < 2) continue;
-    if (!usedDays.has(dateKey) || picked.length >= 2) {
-      picked.push({ start: slot.start, end: slot.end });
+    const isNewDay = !usedDays.has(dateKey);
+    const isNewType = hasMultipleTypes && !usedTypes.has(slot.typeName);
+
+    if (isNewDay || isNewType || picked.length >= 2) {
+      picked.push({ start: slot.start, end: slot.end, typeName: slot.typeName });
       usedDays.add(dateKey);
+      usedTypes.add(slot.typeName);
     }
   }
 
-  // Backfill if we still don't have 3
+  // Backfill if needed
   if (picked.length < 3) {
     for (const slot of viable) {
       if (picked.length >= 3) break;
       if (!picked.some(p => p.start.getTime() === slot.start.getTime())) {
-        picked.push({ start: slot.start, end: slot.end });
+        picked.push({ start: slot.start, end: slot.end, typeName: slot.typeName });
       }
     }
   }
 
+  // Build labels only when slots come from multiple types
+  const distinctTypes = new Set(picked.map(p => p.typeName).filter(Boolean));
+  const showLabels = distinctTypes.size > 1;
+
   const formatted = picked
-    .map((s, i) => `${i + 1}. ${formatSlot(s.start, s.end, tz)}`)
+    .map((s, i) => {
+      const label = showLabels && s.typeName ? ` (${s.typeName.toLowerCase()})` : "";
+      return `${i + 1}. ${formatSlot(s.start, s.end, tz)}${label}`;
+    })
     .join("\n");
 
-  const raw = picked.map(
-    (s) => formatSlot(s.start, s.end, tz),
-  );
+  const raw = picked.map((s) => formatSlot(s.start, s.end, tz));
+  const typeLabels = showLabels ? picked.map(p => p.typeName) : undefined;
 
-  return { formatted, raw };
+  return { formatted, raw, typeLabels };
+}
+
+/** Parse "HH:MM" time string to minutes since midnight. */
+function parseTimeToMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + (m || 0);
 }
 
 /** Build a ComposerContext appropriate for the intent in simulation mode. */
@@ -807,6 +866,7 @@ function buildSimComposerContext(
     participantNames: string[];
     senderName: string;
     formattedSlots?: string;
+    slotTypeLabels?: string[];
     proposedSlots?: string[];
     originalEmailSummary?: string;
   },
@@ -818,6 +878,7 @@ function buildSimComposerContext(
     participantNames: opts.participantNames,
     senderName: opts.senderName,
     originalEmailSummary: opts.originalEmailSummary,
+    ...(opts.slotTypeLabels ? { slotTypeLabels: opts.slotTypeLabels } : {}),
   };
 
   switch (intent) {
