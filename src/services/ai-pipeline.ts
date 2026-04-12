@@ -183,6 +183,12 @@ TIME PREFERENCE EXTRACTION (critical):
 - Use "prefer" or "available" for things they CAN do.
 - When a participant suggests specific times (e.g. "How about Thursday at 11am?"), mark those as "prefer" type preferences. The previously proposed times that were NOT selected should be considered implicitly rejected.
 
+UNAVAILABILITY WINDOWS — be precise and cover the FULL range:
+- "I'm traveling until early May" → unavailable from NOW (${nowLocal}) through May 3. The START of the window is today, the END is when they become available again. Do NOT just mark "this week" — cover the entire unavailable period.
+- "I'm out next week" → unavailable for the entire week (Monday through Friday/Sunday).
+- "Not available before 11 AM" → unavailable timeOfDayStart: "00:00", timeOfDayEnd: "11:00" (covers the blocked period, not the available one).
+- Always err on the side of making unavailable windows LARGER rather than smaller. It's better to miss a slot than to propose a time someone explicitly said they can't do.
+
 TIME-OF-DAY PREFERENCES (use timeOfDayStart/timeOfDayEnd):
 - "mornings" → timeOfDayStart: "08:00", timeOfDayEnd: "12:00"
 - "afternoons" → timeOfDayStart: "12:00", timeOfDayEnd: "17:00"

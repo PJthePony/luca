@@ -771,6 +771,7 @@ function applyHardFilter(
     }
 
     // Day-of-week filtering (only for prefs without ISO dates)
+    // When recipient asks for specific days, respect it strictly — don't fall back
     const dowPrefs = includePrefs.filter((p) => p.dayOfWeek !== undefined && !p.start);
     if (dowPrefs.length > 0) {
       const preferredDays = new Set(dowPrefs.map((p) => p.dayOfWeek!));
@@ -778,10 +779,13 @@ function applyHardFilter(
         const slotDow = getLocalDayOfWeek(slot.start, tz);
         return preferredDays.has(slotDow);
       });
-      if (filtered.length > 0) result = filtered;
+      // Strict: don't fall back. If no slots on requested days, return empty
+      // so the caller can show "no availability on those days" message.
+      result = filtered;
     }
 
     // Time-of-day filtering (only for prefs without ISO dates)
+    // Same strict approach — don't offer 9 AM when they said "after 11"
     const todPrefs = includePrefs.filter(
       (p) => p.timeOfDayStart && p.timeOfDayEnd && !p.start,
     );
@@ -794,12 +798,13 @@ function applyHardFilter(
           return slotMinutes >= sh * 60 + sm && slotMinutes < eh * 60 + em;
         });
       });
-      if (filtered.length > 0) result = filtered;
+      result = filtered;
     }
   }
 
-  // Fallback: return all slots if filtering eliminated everything
-  return result.length > 0 ? result : slots;
+  // Return whatever survived filtering. Empty = no slots match all constraints.
+  // The caller handles empty results with noSlotsMessage.
+  return result;
 }
 
 /**

@@ -824,6 +824,16 @@ simulatorRoutes.post("/reply", async (c) => {
         );
       }
       timing.slotSearch = `${Date.now() - slotsStart}ms`;
+
+      // Handle empty results — no slots matched the combined constraints
+      if (realSlots.length === 0) {
+        const recipientPrefers = (extracted.time_preferences ?? []).filter(p => p.type === "prefer");
+        const wantedDesc = recipientPrefers.map(p => p.description).filter(Boolean).join(", ");
+        preferencesMismatchNote = wantedDesc
+          ? `There are no available slots matching "${wantedDesc}" on the calendar. Let the recipient know and ask if other days or times would work.`
+          : `There are no available slots matching the requested constraints. Ask the recipient for alternative days or times.`;
+      }
+
       replySlots = formatRealSlots(realSlots, session.tz);
 
       // Check if returned slots actually match the recipient's "prefer" preferences
