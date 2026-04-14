@@ -74,6 +74,7 @@ export async function createTentativeEvent(
     summary: string;
     start: Date;
     end: Date;
+    organizerEmail: string;
     attendees?: string[];
     description?: string;
     addGoogleMeet?: boolean;
@@ -83,13 +84,21 @@ export async function createTentativeEvent(
 ): Promise<{ eventId: string; meetLink?: string }> {
   const calendar = getCalendarClient(tokens);
 
+  // Build attendees list with the organizer explicitly included and accepted
+  const attendeesList = [
+    { email: event.organizerEmail, responseStatus: "accepted", organizer: true },
+    ...(event.attendees ?? [])
+      .filter((email) => email !== event.organizerEmail)
+      .map((email) => ({ email })),
+  ];
+
   const requestBody: Record<string, unknown> = {
     summary: event.summary,
     description: event.description,
     status: "tentative",
     start: { dateTime: event.start.toISOString(), timeZone: event.timeZone ?? "America/New_York" },
     end: { dateTime: event.end.toISOString(), timeZone: event.timeZone ?? "America/New_York" },
-    attendees: event.attendees?.map((email) => ({ email })),
+    attendees: attendeesList,
     transparency: "opaque",
   };
 
@@ -128,6 +137,7 @@ export async function confirmEvent(
   location?: string,
   addGoogleMeet?: boolean,
   timeZone?: string,
+  organizerEmail?: string,
 ): Promise<{ meetLink?: string }> {
   const calendar = getCalendarClient(tokens);
 
@@ -141,10 +151,22 @@ export async function confirmEvent(
 
   const tz = timeZone ?? "America/New_York";
 
+  // Build attendees with organizer explicitly included
+  const attendeesList = attendees?.map((email) => {
+    if (organizerEmail && email === organizerEmail) {
+      return { email, responseStatus: "accepted", organizer: true };
+    }
+    return { email };
+  });
+  // If organizer isn't in the attendees list, add them
+  if (organizerEmail && attendeesList && !attendeesList.some(a => a.email === organizerEmail)) {
+    attendeesList.unshift({ email: organizerEmail, responseStatus: "accepted", organizer: true });
+  }
+
   const patchBody: Record<string, unknown> = {
     status: "confirmed",
     summary,
-    attendees: attendees?.map((email) => ({ email })),
+    attendees: attendeesList,
     // Re-set start/end with explicit timeZone to avoid timezone drift
     start: { ...existing.data.start, timeZone: tz },
     end: { ...existing.data.end, timeZone: tz },
@@ -172,6 +194,7 @@ export async function confirmEvent(
   const response = await calendar.events.patch({
     calendarId: "primary",
     eventId,
+    sendUpdates: "all",
     conferenceDataVersion: addGoogleMeet ? 1 : undefined,
     requestBody: patchBody,
   });

@@ -66,7 +66,11 @@ export async function proposeTimes(
       );
     }
 
-    // Look up work email for busy holds
+    // Look up organizer email and work email
+    const organizer = await db.query.users.findFirst({
+      where: eq(users.id, meeting.organizerId),
+    });
+    const organizerEmail = organizer?.email ?? "";
     const workEmail = await getWorkEmail(meeting.organizerId);
 
     // Create tentative calendar holds
@@ -78,6 +82,7 @@ export async function proposeTimes(
         summary: `[Tentative] ${meetingTitle}`,
         start: slot.start,
         end: slot.end,
+        organizerEmail,
         description,
         addGoogleMeet: options?.addGoogleMeet,
         location: options?.location,
@@ -213,6 +218,7 @@ export async function confirmSlot(
         location,
         isVideoCall,
         tz,
+        organizer?.email,
       );
     }
 
