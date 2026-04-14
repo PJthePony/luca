@@ -118,7 +118,7 @@ function formatDraftEmail(payload: DraftNotificationPayload): { subject: string;
     ? payload.composedText.slice(0, 1000) + "..."
     : payload.composedText;
 
-  const approvalUrl = `${env.APP_URL}/drafts/${payload.shortCode}`;
+  const approvalUrl = `${env.APP_URL}/approval/review/${payload.shortCode}`;
 
   if (payload.type === "draft_flagged") {
     const parts: string[] = [
