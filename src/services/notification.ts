@@ -9,6 +9,7 @@ export type NotificationType =
   | "meeting_rescheduled"
   | "meeting_cancelled"
   | "google_token_expired"
+  | "email_sent"
   | "draft_ready"
   | "draft_flagged"
   | "draft_sent"
@@ -71,6 +72,8 @@ function formatMessage(payload: NotificationPayload): string {
       return `Your meeting "${payload.meetingTitle}" has been cancelled.`;
     case "google_token_expired":
       return `Luca's connection to your Google Calendar has expired. A scheduling request for "${payload.meetingTitle}" couldn't be processed. Reconnect at ${env.APP_URL}/settings — Luca will retry automatically.`;
+    case "email_sent":
+      return `Luca sent a reply for "${payload.meetingTitle}." ${payload.meetingShortId ? `${env.APP_URL}/meeting/${payload.meetingShortId}` : ""}`;
     default:
       return "";
   }

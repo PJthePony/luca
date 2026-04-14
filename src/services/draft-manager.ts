@@ -60,7 +60,7 @@ export async function createDraft(options: CreateDraftOptions) {
 export async function updateDraftWithQC(
   draftId: string,
   qcResult: unknown,
-  status: "pending_approval" | "pending_qc",
+  status: "pending_approval" | "pending_qc" | "sent",
 ) {
   await db
     .update(emailDrafts)

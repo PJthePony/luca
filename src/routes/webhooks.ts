@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { emailMessages, emailThreads, meetings, users } from "../db/schema.js";
+import { emailDrafts, emailMessages, emailThreads, meetings, users } from "../db/schema.js";
 import { parseInboundWebhook, sendEmail } from "../lib/mailgun.js";
 import { resolveThread, isResolveFailure } from "../services/thread-resolver.js";
 import { extractInboundEmail, getThreadHistory } from "../services/ai-parser.js";
@@ -226,7 +226,7 @@ webhookRoutes.post("/inbound", async (c) => {
       ? thread.subject
       : `Re: ${thread.subject}`;
 
-    // Create draft in DB with final result
+    // Create draft in DB for audit trail
     const draft = await createDraft({
       meetingId: meeting.id,
       threadId: thread.id,
@@ -239,30 +239,62 @@ webhookRoutes.post("/inbound", async (c) => {
       composerOutput: { composerContext: result.composerContext, attempts: pipelineResult.attempts },
     });
 
-    // Update draft with final QC results
-    await updateDraftWithQC(draft.id, pipelineResult.finalQC, "pending_approval");
-
     const qcResult = pipelineResult.finalQC;
 
-    // Notify P.J. via iMessage
-    await notifyDraftReady({
-      type: pipelineResult.passed ? "draft_ready" : "draft_flagged",
-      userId: organizer.id,
-      meetingTitle: meeting.title ?? email.subject,
-      shortCode: draft.shortCode,
-      composedText: pipelineResult.finalText,
-      recipients: replyTo,
-      issues: qcResult.issues,
-      questions: qcResult.questions,
-      suggestions: qcResult.suggestions,
-    });
+    if (pipelineResult.passed) {
+      // QC passed — send immediately, no approval needed
+      await sendThreadedReply({
+        threadId: thread.id,
+        to: replyTo,
+        bcc: [organizer.email],
+        text: pipelineResult.finalText,
+      });
 
-    return c.json({
-      status: "draft_pending",
-      intent: extracted.intent,
-      shortCode: draft.shortCode,
-      qcVerdict: qcResult.verdict,
-    });
+      // Mark draft as sent
+      await updateDraftWithQC(draft.id, qcResult, "sent");
+      await db
+        .update(emailDrafts)
+        .set({ sentAt: new Date(), reviewedAt: new Date() })
+        .where(eq(emailDrafts.id, draft.id));
+
+      // Notify P.J. that an email was sent on their behalf
+      await notifyUser({
+        type: "email_sent",
+        userId: organizer.id,
+        meetingTitle: meeting.title ?? email.subject,
+        meetingShortId: meeting.shortId,
+        confirmedTime: pipelineResult.finalText.slice(0, 200),
+      });
+
+      return c.json({
+        status: "sent",
+        intent: extracted.intent,
+        shortCode: draft.shortCode,
+        qcVerdict: qcResult.verdict,
+      });
+    } else {
+      // QC failed — save as draft and notify P.J. for manual review
+      await updateDraftWithQC(draft.id, qcResult, "pending_approval");
+
+      await notifyDraftReady({
+        type: "draft_flagged",
+        userId: organizer.id,
+        meetingTitle: meeting.title ?? email.subject,
+        shortCode: draft.shortCode,
+        composedText: pipelineResult.finalText,
+        recipients: replyTo,
+        issues: qcResult.issues,
+        questions: qcResult.questions,
+        suggestions: qcResult.suggestions,
+      });
+
+      return c.json({
+        status: "draft_pending",
+        intent: extracted.intent,
+        shortCode: draft.shortCode,
+        qcVerdict: qcResult.verdict,
+      });
+    }
   } catch (err) {
     console.error("=== WEBHOOK ERROR ===");
     console.error("Error:", err);
