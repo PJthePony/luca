@@ -411,10 +411,12 @@ export const baseStyles = `
   }
   .modal-title {
     font-family: var(--font-serif);
-    font-size: 1.05rem;
+    font-size: 1.4rem;
     font-weight: 600;
-    letter-spacing: -0.015em;
-    font-variation-settings: 'opsz' 24, 'WONK' 1;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    font-variation-settings: 'opsz' 48, 'WONK' 1;
+    color: var(--nxb-color-text);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -514,7 +516,7 @@ export const baseStyles = `
     .modal-header { padding: 14px 16px; }
     .modal-body { padding: 16px; }
     .modal-footer { padding: 12px 16px; }
-    .modal-title { font-size: 0.98rem; }
+    .modal-title { font-size: 1.2rem; }
     #toast {
       left: 16px;
       right: 16px;
