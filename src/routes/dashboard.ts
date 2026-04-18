@@ -907,7 +907,7 @@ function renderDashboardPage(
 
   <div id="toast"></div>
 
-  <footer style="padding:24px 32px;text-align:center;font-size:0.7rem;color:var(--nxb-color-text-muted, #94a3b8);border-top:1px solid var(--nxb-color-border, rgba(255,255,255,0.06));">
+  <footer style="padding:32px;text-align:center;font-size:0.72rem;letter-spacing:0.04em;color:var(--nxb-color-text-muted);border-top:1px solid var(--nxb-color-border);">
     <a href="https://tanzillo.ai/privacy.html" target="_blank" style="color:inherit;text-decoration:none;margin-right:16px;">Privacy</a>
     <a href="https://tanzillo.ai/terms.html" target="_blank" style="color:inherit;text-decoration:none;">Terms</a>
   </footer>

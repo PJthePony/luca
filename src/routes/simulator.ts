@@ -29,71 +29,249 @@ simulatorRoutes.get("/", async (c) => {
   ${fontLinks}
   <style>
     ${baseStyles}
-    body { background: var(--nxb-color-bg); color: var(--nxb-color-text); line-height: 1.6; padding: 24px; }
+    body { padding: 24px; }
     .container { max-width: 1100px; margin: 0 auto; }
     .header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
-    .header h1 { font-size: 1.3rem; font-weight: 600; }
-    .header a { color: var(--nxb-color-text-secondary); font-size: 0.85rem; text-decoration: none; margin-left: auto; }
-    .header a:hover { color: var(--nxb-color-text); }
+    .header h1 {
+      font-family: var(--font-serif);
+      font-size: 1.5rem;
+      font-weight: 600;
+      font-variation-settings: 'opsz' 48, 'WONK' 1;
+      letter-spacing: -0.02em;
+    }
+    .header a {
+      color: var(--nxb-color-text-secondary);
+      font-size: 0.85rem;
+      text-decoration: none;
+      margin-left: auto;
+      transition: color var(--nxb-transition-fast);
+    }
+    .header a:hover { color: var(--fuchsia-600); }
 
     .sim-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
     @media (max-width: 800px) { .sim-layout { grid-template-columns: 1fr; } }
 
     /* Left: conversation thread */
-    .thread-panel { background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border); border-radius: 10px; padding: 20px; min-height: 500px; display: flex; flex-direction: column; }
-    .thread-panel h2 { font-size: 0.95rem; font-weight: 600; color: var(--nxb-color-text-secondary); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .thread-panel {
+      background: var(--nxb-color-surface);
+      border: 1px solid var(--nxb-color-border);
+      border-radius: var(--nxb-radius-md);
+      padding: 20px;
+      min-height: 500px;
+      display: flex;
+      flex-direction: column;
+    }
+    .thread-panel h2 {
+      font-family: var(--font-sans);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--nxb-color-text-secondary);
+      margin: 0 0 14px;
+      padding: 0;
+      border: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
     .thread-messages { flex: 1; overflow-y: auto; margin-bottom: 16px; }
-    .thread-empty { color: var(--nxb-color-text-muted); font-size: 0.85rem; text-align: center; padding: 40px 0; }
+    .thread-empty {
+      color: var(--nxb-color-text-muted);
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-size: 0.9rem;
+      text-align: center;
+      padding: 40px 0;
+    }
 
-    .msg { margin-bottom: 12px; border-radius: 8px; padding: 12px; font-size: 0.85rem; }
-    .msg.organizer { background: #f0fdf4; border: 1px solid #bbf7d0; }
-    .msg.inbound { background: #f0f4f8; border: 1px solid #e2e8f0; }
-    .msg.outbound { background: #fffbf5; border: 1px solid #fed7aa; }
-    .msg-header { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 0.75rem; color: var(--nxb-color-text-secondary); }
+    .msg {
+      margin-bottom: 12px;
+      border-radius: var(--nxb-radius-sm);
+      padding: 12px;
+      font-size: 0.85rem;
+      border: 1px solid transparent;
+    }
+    .msg.organizer { background: var(--success-100); border-color: rgba(43,138,110,0.25); }
+    .msg.inbound   { background: var(--azure-100);   border-color: rgba(59,90,140,0.22); }
+    .msg.outbound  { background: rgba(212, 36, 111, 0.06); border-color: rgba(212, 36, 111, 0.2); }
+    .msg-header {
+      display: flex; justify-content: space-between; margin-bottom: 6px;
+      font-size: 0.72rem; color: var(--nxb-color-text-secondary);
+    }
     .msg-from { font-weight: 600; }
-    .msg-label { font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
-    .msg-label.org { background: #dcfce7; color: #166534; }
-    .msg-label.in { background: #e0e7ff; color: #3730a3; }
-    .msg-label.out { background: #fff7ed; color: #c2410c; }
-    .msg-body { white-space: pre-wrap; line-height: 1.5; }
+    .msg-label {
+      font-family: var(--font-sans);
+      font-size: 0.6rem;
+      padding: 2px 6px;
+      border-radius: var(--nxb-radius-sm);
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .msg-label.org { background: var(--success-100); color: var(--success-600); }
+    .msg-label.in  { background: var(--azure-100);   color: var(--azure-600); }
+    .msg-label.out { background: rgba(212,36,111,0.1); color: var(--fuchsia-800); }
+    .msg-body { white-space: pre-wrap; line-height: 1.55; }
 
     /* Compose area at bottom of thread */
     .compose-area { border-top: 1px solid var(--nxb-color-border); padding-top: 12px; }
-    .compose-area textarea { width: 100%; padding: 10px; border: 1px solid var(--nxb-color-border); border-radius: 6px; font-size: 0.85rem; min-height: 80px; resize: vertical; margin-bottom: 8px; }
-    .compose-controls { display: flex; gap: 8px; align-items: center; }
-    .btn { padding: 7px 16px; border-radius: 6px; font-weight: 500; font-size: 0.82rem; }
-    .btn-primary { background: var(--nxb-color-primary); color: white; }
-    .btn-primary:hover { background: var(--nxb-color-primary-hover); }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-danger { background: white; color: var(--nxb-color-danger); border: 1px solid var(--nxb-color-danger); }
-    .btn-danger:hover { background: #fef2f2; }
+    .compose-area textarea {
+      width: 100%; padding: 10px;
+      border: 1px solid var(--nxb-color-border-light);
+      border-radius: var(--nxb-radius-sm);
+      font-family: var(--font-sans);
+      font-size: 0.85rem; background: var(--sage-100);
+      min-height: 80px; resize: vertical; margin-bottom: 8px;
+      transition: border-color var(--nxb-transition-fast), box-shadow var(--nxb-transition-fast);
+    }
+    .compose-area textarea:focus {
+      outline: none;
+      border-color: var(--fuchsia-600);
+      background: var(--sage-50);
+      box-shadow: 0 0 0 3px rgba(212,36,111,0.12);
+    }
+    .compose-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .btn {
+      padding: 8px 16px;
+      border-radius: var(--nxb-radius-md);
+      font-weight: 600;
+      font-size: 0.82rem;
+      letter-spacing: -0.005em;
+      border: 1px solid transparent;
+      transition: background var(--nxb-transition-fast), color var(--nxb-transition-fast), border-color var(--nxb-transition-fast), transform var(--nxb-transition-fast), box-shadow var(--nxb-transition-fast);
+    }
+    .btn-primary {
+      background: var(--fuchsia-600); color: white;
+      box-shadow: 0 12px 22px -14px rgba(212,36,111,0.55), 0 1px 0 rgba(255,255,255,0.15) inset;
+    }
+    .btn-primary:hover { background: var(--fuchsia-800); transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-danger {
+      background: transparent;
+      color: var(--danger-600);
+      border: 1.5px solid var(--danger-600);
+    }
+    .btn-danger:hover { background: var(--danger-100); }
     .compose-status { font-size: 0.8rem; color: var(--nxb-color-text-secondary); margin-left: auto; }
 
     /* Right: pipeline inspector */
     .inspector-panel { display: flex; flex-direction: column; gap: 12px; }
-    .inspector-panel h2 { font-size: 0.95rem; font-weight: 600; color: var(--nxb-color-text-secondary); margin-bottom: 4px; }
-    .agent-card { background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border); border-radius: 10px; padding: 14px; }
-    .agent-card h3 { font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
-    .agent-card pre { font-size: 0.72rem; background: #f8fafc; border: 1px solid var(--nxb-color-border); border-radius: 6px; padding: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; margin: 0; }
-    .agent-card ul { font-size: 0.78rem; padding-left: 16px; margin: 0; }
+    .inspector-panel h2 {
+      font-family: var(--font-sans);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--nxb-color-text-secondary);
+      margin: 0 0 4px;
+      padding: 0;
+      border: none;
+    }
+    .agent-card {
+      background: var(--nxb-color-surface);
+      border: 1px solid var(--nxb-color-border);
+      border-radius: var(--nxb-radius-md);
+      padding: 16px;
+      transition: border-color var(--nxb-transition-fast), box-shadow var(--nxb-transition-fast);
+    }
+    .agent-card:hover { border-color: var(--nxb-color-border-light); box-shadow: var(--shadow-hang-sm); }
+    .agent-card h3 {
+      font-family: var(--font-serif);
+      font-size: 0.92rem;
+      font-weight: 600;
+      font-variation-settings: 'opsz' 24, 'WONK' 0;
+      letter-spacing: -0.01em;
+      margin-bottom: 8px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .agent-card pre {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      background: var(--navy-600); color: var(--sage-200);
+      border: 1px solid var(--navy-400);
+      border-radius: var(--nxb-radius-sm);
+      padding: 10px;
+      overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+      max-height: 200px; overflow-y: auto; margin: 0;
+    }
+    .agent-card ul { font-size: 0.78rem; padding-left: 18px; margin: 6px 0 0; line-height: 1.6; }
     .agent-card li { margin-bottom: 3px; }
-    .badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
-    .badge.pass { background: #dcfce7; color: #166534; }
-    .badge.fail { background: #fee2e2; color: #991b1b; }
-    .badge.intent { background: #e0e7ff; color: #3730a3; }
-    .timing { font-size: 0.7rem; color: var(--nxb-color-text-muted); margin-top: 4px; }
-    .inspector-empty { color: var(--nxb-color-text-muted); font-size: 0.85rem; text-align: center; padding: 40px 0; }
+    .agent-card li::marker { color: var(--fuchsia-600); }
+    .badge {
+      font-family: var(--font-sans);
+      font-size: 0.6rem;
+      padding: 2px 7px;
+      border-radius: var(--nxb-radius-sm);
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin-left: 0;
+    }
+    .badge.pass   { background: var(--success-100); color: var(--success-600); }
+    .badge.fail   { background: var(--danger-100);  color: var(--danger-600); }
+    .badge.intent { background: var(--violet-100);  color: var(--violet-600); }
+    .timing {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--nxb-color-text-muted);
+      margin-top: 6px;
+    }
+    .inspector-empty {
+      color: var(--nxb-color-text-muted);
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-size: 0.92rem;
+      text-align: center;
+      padding: 40px 0;
+    }
 
     /* Start form (before conversation begins) */
     .start-form { padding: 16px 0; }
     .start-form .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
     .start-form .form-row.full { grid-template-columns: 1fr; }
-    .form-group label { display: block; font-size: 0.78rem; font-weight: 500; color: var(--nxb-color-text-secondary); margin-bottom: 3px; }
-    .form-group input, .form-group textarea { width: 100%; padding: 7px 10px; border: 1px solid var(--nxb-color-border); border-radius: 6px; font-size: 0.85rem; }
-    .form-group input[readonly] { background: #f8fafc; color: var(--nxb-color-text-secondary); }
+    .form-group label {
+      display: block;
+      font-family: var(--font-sans);
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--nxb-color-text-secondary);
+      margin-bottom: 4px;
+    }
+    .form-group input, .form-group textarea {
+      width: 100%; padding: 8px 10px;
+      border: 1px solid var(--nxb-color-border-light);
+      border-radius: var(--nxb-radius-sm);
+      font-size: 0.88rem;
+      background: var(--sage-100);
+      color: var(--nxb-color-text);
+      font-family: var(--font-sans);
+      transition: border-color var(--nxb-transition-fast), box-shadow var(--nxb-transition-fast), background var(--nxb-transition-fast);
+    }
+    .form-group input:focus, .form-group textarea:focus {
+      outline: none;
+      border-color: var(--fuchsia-600);
+      background: var(--sage-50);
+      box-shadow: 0 0 0 3px rgba(212,36,111,0.12);
+    }
+    .form-group input[readonly] {
+      background: var(--sage-200);
+      color: var(--nxb-color-text-secondary);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+    }
     .form-group textarea { min-height: 80px; resize: vertical; }
 
-    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #e2e8f0; border-top-color: var(--nxb-color-primary); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid var(--sage-400);
+      border-top-color: var(--fuchsia-600);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+    }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -179,9 +357,9 @@ simulatorRoutes.get("/", async (c) => {
             <div class="timing" id="agent1Time"></div>
           </div>
           <div id="attemptsContainer"></div>
-          <div class="agent-card" id="draftNotification" style="display: none; border-color: var(--nxb-color-accent);">
-            <h3 style="color: var(--nxb-color-accent);">Draft Notification (iMessage to you)</h3>
-            <pre id="draftNotificationText" style="background: #fffbf5; border-color: #fed7aa;"></pre>
+          <div class="agent-card" id="draftNotification" style="display: none; border-color: rgba(212,36,111,0.25); background: rgba(212,36,111,0.03);">
+            <h3 style="color: var(--fuchsia-600);">Draft notification</h3>
+            <pre id="draftNotificationText" style="background: var(--sage-100); color: var(--nxb-color-text); border-color: var(--nxb-color-border);"></pre>
           </div>
         </div>
       </div>
@@ -263,7 +441,7 @@ simulatorRoutes.get("/", async (c) => {
         if (attempt.qcResult.suggestions?.length) {
           qcHtml += '<p style="font-size:0.75rem;font-weight:500;margin:6px 0 3px;">Suggestions:</p><ul style="font-size:0.75rem;">' + attempt.qcResult.suggestions.map(function(s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul>';
         }
-        if (isPass && !qcHtml) qcHtml = '<p style="font-size:0.75rem;color:#059669;">QC passed.</p>';
+        if (isPass && !qcHtml) qcHtml = '<p style="font-size:0.78rem;color:var(--success-600);font-family:var(--font-serif);font-style:italic;">QC passed.</p>';
 
         card.innerHTML =
           '<h3>Compose + QC' + escapeHtml(attemptLabel) + ' <span class="badge ' + badgeClass + '">' + attempt.qcResult.verdict.toUpperCase() + '</span></h3>' +
@@ -319,7 +497,7 @@ simulatorRoutes.get("/", async (c) => {
         const data = await res.json();
         if (!res.ok) {
           if (data.authError && data.reconnectUrl) {
-            startStatus.innerHTML = 'Google Calendar connection expired. <a href="' + data.reconnectUrl + '" style="color: var(--nxb-color-primary); font-weight: 600;">Reconnect Google Calendar</a>';
+            startStatus.innerHTML = 'Google Calendar connection expired. <a href="' + data.reconnectUrl + '" style="color: var(--fuchsia-600); font-weight: 600;">Reconnect Google Calendar</a>';
           } else {
             startStatus.textContent = 'Error: ' + (data.error || 'Unknown');
           }
@@ -396,7 +574,7 @@ simulatorRoutes.get("/", async (c) => {
         const data = await res.json();
         if (!res.ok) {
           if (data.authError && data.reconnectUrl) {
-            status.innerHTML = 'Google Calendar expired. <a href="' + data.reconnectUrl + '" style="color: var(--nxb-color-primary); font-weight: 600;">Reconnect</a>';
+            status.innerHTML = 'Google Calendar expired. <a href="' + data.reconnectUrl + '" style="color: var(--fuchsia-600); font-weight: 600;">Reconnect</a>';
           } else {
             status.textContent = 'Error: ' + (data.error || 'Unknown');
           }

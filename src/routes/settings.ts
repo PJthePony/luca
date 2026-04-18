@@ -552,9 +552,9 @@ export function renderSettingsBody(
   const retryBanner = retryableMeetings && retryableMeetings.length > 0
     ? `
     <!-- Retry Banner -->
-    <div id="retryBanner" class="card" style="border: 1px solid #f97316; margin-bottom: 1.5rem;">
+    <div id="retryBanner" class="card" style="border: 1px solid var(--fuchsia-600); margin-bottom: 1.5rem; background: var(--fuchsia-50);">
       <div class="card-header">
-        <strong style="color: #f97316;">Google Calendar Reconnected</strong>
+        <strong style="color: var(--fuchsia-800); font-family: var(--font-serif); font-size: 1.05rem; font-weight: 600; font-variation-settings: 'opsz' 24, 'WONK' 1; letter-spacing: -0.015em;">Google Calendar reconnected</strong>
         <p class="text-sm text-muted" style="margin: 0.25rem 0 0;">These scheduling requests failed while your calendar was disconnected. Select which ones to retry.</p>
       </div>
       ${retryableMeetings.map((m) => `

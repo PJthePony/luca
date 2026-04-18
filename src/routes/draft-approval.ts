@@ -75,7 +75,7 @@ draftApprovalRoutes.get("/review/:shortCode", async (c) => {
   const draft = await findDraftByShortCode(shortCode);
 
   if (!draft) {
-    return c.html("<h1>Draft not found</h1>", 404);
+    return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8" /><title>Draft not found — Luca</title>${fontLinks}<style>${baseStyles}body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;text-align:center}</style></head><body><div><h1>Something got lost on the way to the docks.</h1><p class="text-muted" style="margin-top:12px;">No draft matches that code. It may have already been sent or rejected.</p></div></body></html>`, 404);
   }
 
   const qc = draft.qcResult as { issues?: string[]; questions?: string[]; suggestions?: string[] } | null;
@@ -91,34 +91,142 @@ draftApprovalRoutes.get("/review/:shortCode", async (c) => {
   ${fontLinks}
   <style>
     ${baseStyles}
-    body { background: var(--nxb-color-bg); color: var(--nxb-color-text); line-height: 1.6; padding: 24px; }
+    body { padding: 24px; }
     .container { max-width: 700px; margin: 0 auto; }
     .header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
-    .header h1 { font-size: 1.3rem; font-weight: 600; }
-    .card { background: var(--nxb-color-surface); border: 1px solid var(--nxb-color-border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
-    .card h2 { font-size: 0.95rem; font-weight: 600; color: var(--nxb-color-text-secondary); margin-bottom: 10px; }
-    .meta { font-size: 0.82rem; color: var(--nxb-color-text-secondary); margin-bottom: 12px; }
-    .draft-body { white-space: pre-wrap; font-size: 0.9rem; line-height: 1.6; background: #f8fafc; border: 1px solid var(--nxb-color-border); border-radius: 6px; padding: 14px; margin-bottom: 16px; }
+    .header h1 {
+      font-family: var(--font-serif);
+      font-size: 1.5rem;
+      font-weight: 600;
+      font-variation-settings: 'opsz' 48, 'WONK' 1;
+      letter-spacing: -0.02em;
+    }
+    .card h2 {
+      font-family: var(--font-serif);
+      font-size: 1.05rem;
+      font-weight: 600;
+      font-variation-settings: 'opsz' 24, 'WONK' 1;
+      letter-spacing: -0.015em;
+      color: var(--nxb-color-text);
+      margin-bottom: 10px;
+      border: none;
+      padding: 0;
+    }
+    .meta {
+      font-family: var(--font-sans);
+      font-size: 0.82rem;
+      color: var(--nxb-color-text-secondary);
+      margin-bottom: 14px;
+      line-height: 1.7;
+    }
+    .meta strong {
+      font-family: var(--font-sans);
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--nxb-color-text-muted);
+      margin-right: 6px;
+    }
+    .draft-body {
+      white-space: pre-wrap;
+      font-family: var(--font-serif);
+      font-size: 0.95rem;
+      line-height: 1.65;
+      background: var(--sage-100);
+      border: 1px solid var(--nxb-color-border);
+      border-radius: var(--nxb-radius-sm);
+      padding: 16px 18px;
+      margin-bottom: 16px;
+      font-variation-settings: 'opsz' 14;
+    }
     .issues { margin-bottom: 16px; }
-    .issues h3 { font-size: 0.85rem; font-weight: 600; color: #dc2626; margin-bottom: 6px; }
-    .issues ul { font-size: 0.82rem; padding-left: 18px; margin: 0; }
+    .issues h3 {
+      font-family: var(--font-sans);
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--danger-600);
+      margin-bottom: 8px;
+    }
+    .issues ul { font-size: 0.82rem; padding-left: 18px; margin: 0; line-height: 1.65; }
     .issues li { margin-bottom: 4px; }
-    .edit-area { width: 100%; min-height: 150px; padding: 12px; border: 1px solid var(--nxb-color-border); border-radius: 6px; font-size: 0.9rem; font-family: inherit; resize: vertical; margin-bottom: 12px; }
+    .issues li::marker { color: var(--fuchsia-600); }
+    .edit-area {
+      width: 100%;
+      min-height: 150px;
+      padding: 14px;
+      border: 1px solid var(--nxb-color-border-light);
+      border-radius: var(--nxb-radius-sm);
+      font-family: var(--font-serif);
+      font-size: 0.95rem;
+      line-height: 1.65;
+      background: var(--sage-100);
+      color: var(--nxb-color-text);
+      resize: vertical;
+      margin-bottom: 12px;
+      transition: border-color var(--nxb-transition-fast), box-shadow var(--nxb-transition-fast);
+    }
+    .edit-area:focus {
+      outline: none;
+      border-color: var(--fuchsia-600);
+      background: var(--sage-50);
+      box-shadow: 0 0 0 3px rgba(212, 36, 111, 0.12);
+    }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; }
-    .btn { padding: 8px 20px; border-radius: 6px; font-weight: 500; font-size: 0.85rem; cursor: pointer; border: none; }
-    .btn-send { background: var(--nxb-color-primary); color: white; }
-    .btn-send:hover { opacity: 0.9; }
-    .btn-edit { background: #f59e0b; color: white; }
-    .btn-edit:hover { opacity: 0.9; }
-    .btn-reject { background: white; color: #dc2626; border: 1px solid #dc2626; }
-    .btn-reject:hover { background: #fef2f2; }
-    .status-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-    .badge-sent { background: #dcfce7; color: #166534; }
-    .badge-rejected { background: #fee2e2; color: #991b1b; }
-    .badge-pending { background: #fef3c7; color: #92400e; }
-    #result { margin-top: 12px; padding: 10px; border-radius: 6px; display: none; font-size: 0.85rem; }
-    .result-ok { background: #dcfce7; color: #166534; }
-    .result-err { background: #fee2e2; color: #991b1b; }
+    .btn {
+      padding: 9px 20px;
+      border-radius: var(--nxb-radius-md);
+      font-weight: 600;
+      font-size: 0.88rem;
+      letter-spacing: -0.005em;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background var(--nxb-transition-fast), color var(--nxb-transition-fast), border-color var(--nxb-transition-fast), transform var(--nxb-transition-fast), box-shadow var(--nxb-transition-fast);
+    }
+    .btn-send {
+      background: var(--fuchsia-600);
+      color: white;
+      box-shadow: 0 12px 22px -14px rgba(212,36,111,0.55), 0 1px 0 rgba(255,255,255,0.15) inset;
+    }
+    .btn-send:hover { background: var(--fuchsia-800); transform: translateY(-1px); }
+    .btn-edit {
+      background: var(--warning-100);
+      color: var(--warning-600);
+      border: 1px solid rgba(208, 104, 42, 0.3);
+    }
+    .btn-edit:hover { background: rgba(208, 104, 42, 0.18); }
+    .btn-reject {
+      background: transparent;
+      color: var(--danger-600);
+      border: 1.5px solid var(--danger-600);
+    }
+    .btn-reject:hover { background: var(--danger-100); }
+    .status-badge {
+      display: inline-block;
+      padding: 3px 12px;
+      border-radius: 999px;
+      font-family: var(--font-sans);
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+    }
+    .badge-sent     { background: var(--success-100); color: var(--success-600); border-color: rgba(43,138,110,0.25); }
+    .badge-rejected { background: var(--danger-100);  color: var(--danger-600);  border-color: rgba(168,58,74,0.25); }
+    .badge-pending  { background: var(--warning-100); color: var(--warning-600); border-color: rgba(208,104,42,0.25); }
+    #result {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: var(--nxb-radius-sm);
+      display: none;
+      font-size: 0.88rem;
+      border: 1px solid transparent;
+    }
+    .result-ok  { background: var(--success-100); color: var(--success-600); border-color: rgba(43,138,110,0.25); }
+    .result-err { background: var(--danger-100);  color: var(--danger-600);  border-color: rgba(168,58,74,0.25); }
   </style>
 </head>
 <body>
@@ -154,13 +262,13 @@ draftApprovalRoutes.get("/review/:shortCode", async (c) => {
 
       ${!alreadySent && !rejected ? `
       <div style="margin-bottom: 12px;">
-        <label style="font-size: 0.82rem; font-weight: 500; color: var(--nxb-color-text-secondary);">Edit draft (optional):</label>
-        <textarea class="edit-area" id="editText" placeholder="Paste your edited version here, or leave empty to send as-is...">${escapeHtml(draft.composedText)}</textarea>
+        <label style="display:block;font-family:var(--font-sans);font-size:0.68rem;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:var(--nxb-color-text-secondary);margin-bottom:8px;">Edit draft <span style="font-style:italic;font-family:var(--font-serif);font-weight:400;text-transform:none;letter-spacing:0;color:var(--nxb-color-text-muted);">(optional)</span></label>
+        <textarea class="edit-area" id="editText" placeholder="Paste your edited version here, or leave empty to send as-is…">${escapeHtml(draft.composedText)}</textarea>
       </div>
 
       <div class="actions">
-        <button class="btn btn-send" onclick="sendDraft()">Send As-Is</button>
-        <button class="btn btn-edit" onclick="sendEdited()">Send Edited Version</button>
+        <button class="btn btn-send" onclick="sendDraft()">Send as-is</button>
+        <button class="btn btn-edit" onclick="sendEdited()">Send edited version</button>
         <button class="btn btn-reject" onclick="rejectDraft()">Reject</button>
       </div>` : ""}
 

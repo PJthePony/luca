@@ -53,17 +53,11 @@ app.get("/", async (c) => {
   ${fontLinks}
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-      line-height: 1.6;
-    }
     ${landingDarkStyles}
   </style>
 </head>
 <body>
-  <!-- Ambient particles -->
+  <!-- Ambient particles — dust in a stage light -->
   <div class="particles">
     <div class="particle"></div>
     <div class="particle"></div>
@@ -85,18 +79,18 @@ app.get("/", async (c) => {
   <!-- Nav -->
   <nav class="landing-nav">
     <div class="nav-logo">${logoSvgDark}</div>
-    <span class="nav-brand">tanzillo.ai</span>
+    <span class="nav-brand">tanzillo<span class="dot-accent">.</span>ai</span>
   </nav>
 
   <!-- Hero -->
   <section class="hero">
     <div class="hero-content">
       <div class="hero-icon">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#D4246F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
       </div>
       <h1 class="hero-headline">Luca</h1>
-      <p class="hero-description">Your AI scheduling assistant.</p>
-      <a href="/login" class="sign-in-btn">Sign In</a>
+      <p class="hero-description">The enforcer of <em style="color:var(--fuchsia-600);font-family:var(--font-serif);font-style:italic;font-weight:600;">my calendar</em>.</p>
+      <a href="/login" class="sign-in-btn">Sign in</a>
     </div>
   </section>
 
