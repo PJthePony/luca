@@ -1308,7 +1308,7 @@ function renderMeetingCard(d: MeetingData, tz: string): string {
   if (isCancelled) {
     const dateStr = m.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: tz });
     return `
-    <div class="meeting-card cancelled" data-status="cancelled" data-upcoming="false">
+    <div class="meeting-card cancelled" data-status="cancelled" data-upcoming="false" style="display:none;">
       <div class="meeting-card-header">
         <div style="white-space:nowrap;">
           <span class="status-badge cancelled">Cancelled</span>
@@ -1366,8 +1366,10 @@ function renderMeetingCard(d: MeetingData, tz: string): string {
   }
   actions.push(`<button class="action-btn comms" onclick="openCommsModal('${m.id}', '${(m.title ?? "Meeting").replace(/'/g, "\\'")}')">View Comms${d.messageCount > 0 ? ` (${d.messageCount})` : ""}</button>`);
 
+  const hiddenByDefault = !isUpcoming ? ' style="display:none;"' : '';
+
   return `
-  <div class="meeting-card" data-status="${displayStatus}" data-upcoming="${isUpcoming}">
+  <div class="meeting-card" data-status="${displayStatus}" data-upcoming="${isUpcoming}"${hiddenByDefault}>
     <div class="meeting-card-header">
       <div class="meeting-title">${m.title ?? "Meeting"}</div>
       <span class="status-badge ${displayStatus}">${displayStatus}</span>
