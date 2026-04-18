@@ -534,8 +534,9 @@ dashboardRoutes.get("/calendar-events", async (c) => {
       const timeLabel = isAllDay ? "All day" : `${startTime} – ${endTime}`;
       const ignoredClass = isIgnored ? " ignored" : "";
 
-      return `<div class="week-event${ignoredClass}" onclick="toggleCalEvent('${e.calendarId}', '${e.eventId}', '${e.summary.replace(/'/g, "\\'")}', ${isIgnored}, this)">
-        <div class="week-event-name">${e.summary}</div>
+      const titleAttr = escapeHtml(`${e.summary} — ${timeLabel}`);
+      return `<div class="week-event${ignoredClass}" title="${titleAttr}" onclick="toggleCalEvent('${e.calendarId}', '${e.eventId}', '${e.summary.replace(/'/g, "\\'")}', ${isIgnored}, this)">
+        <div class="week-event-name">${escapeHtml(e.summary)}</div>
         <div class="week-event-time">${timeLabel}</div>
       </div>`;
     }).join("");
@@ -1310,9 +1311,9 @@ function renderMeetingCard(d: MeetingData, tz: string): string {
     return `
     <div class="meeting-card cancelled" data-status="cancelled" data-upcoming="false" style="display:none;">
       <div class="meeting-card-header">
-        <div style="white-space:nowrap;">
+        <div style="white-space:nowrap;" title="${escapeHtml(m.title ?? "Meeting")}">
           <span class="status-badge cancelled">Cancelled</span>
-          <span style="margin-left:0.5rem;font-weight:500;">${m.title ?? "Meeting"}</span>
+          <span style="margin-left:0.5rem;font-weight:500;">${escapeHtml(m.title ?? "Meeting")}</span>
           <span class="text-sm text-muted" style="margin-left:0.5rem;">${attendeeStr} · ${dateStr}</span>
         </div>
         <button class="action-btn comms" onclick="openCommsModal('${m.id}', '${(m.title ?? "Meeting").replace(/'/g, "\\'")}')">View Comms</button>
@@ -1368,10 +1369,12 @@ function renderMeetingCard(d: MeetingData, tz: string): string {
 
   const hiddenByDefault = !isUpcoming ? ' style="display:none;"' : '';
 
+  const titleText = m.title ?? "Meeting";
+
   return `
   <div class="meeting-card" data-status="${displayStatus}" data-upcoming="${isUpcoming}"${hiddenByDefault}>
     <div class="meeting-card-header">
-      <div class="meeting-title">${m.title ?? "Meeting"}</div>
+      <div class="meeting-title" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</div>
       <span class="status-badge ${displayStatus}">${displayStatus}</span>
     </div>
     <div class="meeting-meta">${metaParts.join("  ·  ")}</div>

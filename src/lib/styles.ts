@@ -684,15 +684,26 @@ export const settingsStyles = `
   .week-event {
     padding: 0.3rem 0.4rem; border-radius: var(--nxb-radius-sm);
     background: var(--azure-100); border-left: 3px solid var(--azure-600);
-    cursor: pointer; transition: opacity var(--nxb-transition-fast);
+    cursor: pointer;
+    transition: opacity var(--nxb-transition-fast),
+                background var(--nxb-transition-fast),
+                box-shadow var(--nxb-transition-fast);
     font-size: 0.72rem;
+    position: relative;
   }
-  .week-event:hover { opacity: 0.8; }
+  .week-event:hover { opacity: 0.9; background: var(--azure-100); box-shadow: var(--shadow-hang-sm); z-index: 2; }
+  .week-event:hover .week-event-name { white-space: normal; overflow: visible; }
   .week-event.ignored {
     opacity: 0.4; text-decoration: line-through;
     background: var(--sage-200); border-left-color: var(--nxb-color-border);
   }
-  .week-event-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .week-event-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: white-space 0s;
+  }
   .week-event-time { color: var(--nxb-color-text-muted); font-size: 0.68rem; }
   .week-event-none {
     font-size: 0.68rem; color: var(--nxb-color-text-muted);
@@ -1374,6 +1385,11 @@ export const dashboardStyles = `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .meeting-card:hover .meeting-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .meeting-meta {
