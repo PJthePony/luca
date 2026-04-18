@@ -1324,7 +1324,8 @@ export const dashboardStyles = `
     letter-spacing: 0.2em;
     margin-bottom: 6px;
   }
-  .page-header-actions { display: flex; align-items: center; gap: 0.75rem; }
+  .page-header-actions { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
+  .page-header-actions .btn-primary { white-space: nowrap; }
 
   .filter-select {
     padding: 6px 12px;
@@ -1711,6 +1712,20 @@ export const dashboardStyles = `
   /* ── Mobile: dashboard ─────────────────────── */
   @media (max-width: 640px) {
     .container { padding: 1rem 1rem 3rem; }
+    .page-header {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+    .page-header > div:first-child { width: 100%; }
+    .page-header h1 { text-wrap: balance; }
+    .page-header-actions {
+      width: 100%;
+      gap: 0.5rem;
+    }
+    .page-header-actions .btn-primary { flex: 1; }
+    .page-header-actions .filter-select { flex: 0 0 auto; }
     .meeting-card { padding: 1rem; }
     .meeting-card.cancelled { padding: 0.75rem 1rem; }
     .meeting-card-header { flex-wrap: wrap; gap: 0.5rem; }
