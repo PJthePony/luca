@@ -13,6 +13,28 @@ export interface ProposedSlot {
   meetingTypeName?: string;
 }
 
+/**
+ * Extend the search window to cover any future ISO date ranges the recipient
+ * asked about (e.g. "week of May 11"). Without this, the default 10-day window
+ * silently filters out valid requests more than ~10 days out.
+ */
+function extendSearchDaysForPreferences(
+  searchDays: number,
+  timePreferences: TimePreference[],
+): number {
+  const now = Date.now();
+  let maxDays = searchDays;
+  for (const p of timePreferences) {
+    if (p.type !== "prefer" && p.type !== "available") continue;
+    if (!p.end) continue;
+    const endMs = Date.parse(p.end);
+    if (!Number.isFinite(endMs)) continue;
+    const daysOut = Math.ceil((endMs - now) / (24 * 60 * 60 * 1000)) + 1;
+    if (daysOut > maxDays) maxDays = daysOut;
+  }
+  return Math.min(maxDays, 90);
+}
+
 export interface BlockingEvent {
   calendarId: string;
   eventId: string;
@@ -48,6 +70,8 @@ export async function findAvailableSlots(
   }
 
   const tz = organizer.timezone || "America/New_York";
+
+  searchDays = extendSearchDaysForPreferences(searchDays, timePreferences);
 
   // Get standing availability rules
   const rules = await db.query.availabilityRules.findMany({
@@ -194,6 +218,8 @@ export async function findAvailableSlotsMultiType(
   }
 
   const tz = organizer.timezone || "America/New_York";
+
+  searchDays = extendSearchDaysForPreferences(searchDays, timePreferences);
 
   // Get standing availability rules
   const rules = await db.query.availabilityRules.findMany({
