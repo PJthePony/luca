@@ -136,6 +136,91 @@ export async function proposeTimes(
 }
 
 /**
+ * Append additional proposed slots to a meeting already in PROPOSED state.
+ * Creates tentative calendar holds for the new slots; leaves existing slots in place.
+ */
+export async function appendProposedSlots(
+  meetingId: string,
+  slots: { start: Date; end: Date; meetingTypeId?: string }[],
+  organizerTokens: GoogleTokens,
+  meetingTitle: string,
+  description?: string,
+  options?: { addGoogleMeet?: boolean; location?: string; timeZone?: string },
+): Promise<typeof proposedSlots.$inferSelect[]> {
+  return await db.transaction(async (tx) => {
+    const [meeting] = await tx
+      .select()
+      .from(meetings)
+      .where(eq(meetings.id, meetingId))
+      .for("update");
+
+    if (meeting.status !== MeetingStatus.PROPOSED) {
+      throw new Error(
+        `Cannot append slots: meeting is ${meeting.status}, expected ${MeetingStatus.PROPOSED}`,
+      );
+    }
+
+    const organizer = await db.query.users.findFirst({
+      where: eq(users.id, meeting.organizerId),
+    });
+    const organizerEmail = organizer?.email ?? "";
+    const workEmail = await getWorkEmail(meeting.organizerId);
+
+    const createdSlots: (typeof proposedSlots.$inferSelect)[] = [];
+
+    for (const slot of slots) {
+      const result = await gcal.createTentativeEvent(organizerTokens, {
+        summary: `[Tentative] ${meetingTitle}`,
+        start: slot.start,
+        end: slot.end,
+        organizerEmail,
+        description,
+        addGoogleMeet: options?.addGoogleMeet,
+        location: options?.location,
+        timeZone: options?.timeZone,
+      });
+
+      let workBusyId: string | undefined;
+      if (workEmail) {
+        try {
+          workBusyId = await gcal.createBusyHold(organizerTokens, {
+            start: slot.start,
+            end: slot.end,
+            workEmail,
+            timeZone: options?.timeZone,
+          });
+        } catch (err) {
+          console.warn("Failed to create work calendar busy hold:", err);
+        }
+      }
+
+      const [created] = await tx
+        .insert(proposedSlots)
+        .values({
+          meetingId,
+          startTime: slot.start,
+          endTime: slot.end,
+          meetingTypeId: slot.meetingTypeId ?? null,
+          tentativeEventIds: {
+            primary: result.eventId,
+            ...(workBusyId ? { workBusy: workBusyId } : {}),
+          },
+        })
+        .returning();
+
+      createdSlots.push(created);
+    }
+
+    await tx
+      .update(meetings)
+      .set({ updatedAt: new Date() })
+      .where(eq(meetings.id, meetingId));
+
+    return createdSlots;
+  });
+}
+
+/**
  * Confirm a specific time slot.
  * Confirms the selected calendar event and deletes the others.
  */

@@ -903,6 +903,27 @@ export const meetingStyles = `
     transition: color var(--nxb-transition-fast);
   }
   .none-work:hover { color: var(--fuchsia-800); text-decoration: underline; }
+  .none-work[disabled] {
+    cursor: progress; text-decoration: none; opacity: 0.75;
+    display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  }
+  .none-work[disabled]:hover { color: var(--fuchsia-600); text-decoration: none; }
+  .none-work .spinner {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid currentColor; border-right-color: transparent;
+    animation: none-work-spin 0.8s linear infinite;
+    display: inline-block;
+  }
+  @keyframes none-work-spin { to { transform: rotate(360deg); } }
+  .slot-card-new {
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .slot-card-new-in {
+    opacity: 1;
+    transform: translateY(0);
+  }
   #message {
     margin-top: 1rem; padding: 1rem;
     border-radius: var(--nxb-radius-md);

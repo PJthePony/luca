@@ -163,11 +163,47 @@ meetingRoutes.post("/:shortId/more-times", async (c) => {
   }
 
   const tokens = organizer.googleTokens as GoogleTokens;
+  const tz = organizer.timezone || "America/New_York";
 
-  // Start rescheduling
+  // If the meeting is already in PROPOSED state, find additional slots and
+  // append them so the recipient sees the new options added to the existing list.
+  // The organizer's existing tentative holds show as busy, so findAvailableSlots
+  // won't return overlapping times.
   if (meeting.status === "proposed") {
-    await machine.startRescheduling(meeting.id, tokens);
+    const additionalSlots = await findAvailableSlots(
+      organizer.id,
+      meeting.id,
+      meeting.durationMin,
+      [],
+      14,
+      meeting.meetingTypeId,
+    );
+
+    if (additionalSlots.length === 0) {
+      return c.json({ status: "no_more_times", count: 0, slots: [] });
+    }
+
+    const created = await machine.appendProposedSlots(
+      meeting.id,
+      additionalSlots.map((s) => ({ start: s.start, end: s.end })),
+      tokens,
+      meeting.title ?? "Meeting",
+    );
+
+    return c.json({
+      status: "new_times_proposed",
+      count: created.length,
+      slots: created.map((s) => ({
+        id: s.id,
+        date: s.startTime.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz }),
+        time: `${s.startTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })} - ${s.endTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })}`,
+      })),
+    });
   }
+
+  // Fallback for non-proposed states (e.g. confirmed being rescheduled) —
+  // use the full reschedule flow.
+  await machine.startRescheduling(meeting.id, tokens);
 
   const newSlots = await findAvailableSlots(
     organizer.id,
@@ -187,7 +223,7 @@ meetingRoutes.post("/:shortId/more-times", async (c) => {
     );
   }
 
-  return c.json({ status: "new_times_proposed", count: newSlots.length });
+  return c.json({ status: "new_times_proposed", count: newSlots.length, reloadRequired: true });
 });
 
 // ── HTML Rendering ───────────────────────────────────────────────────────────
@@ -269,14 +305,14 @@ function renderMeetingPage(
 
     ${!isConfirmed && !isCancelled && hasLocations ? `<p class="section-label">Time</p>` : ""}
 
-    ${slotCards}
+    <div id="slot-list">${slotCards}</div>
 
     ${!isConfirmed && !isCancelled && hasLocations ? `
       <p class="section-label">Location</p>
       ${locationCards}
     ` : ""}
 
-    ${!isConfirmed && !isCancelled ? `<button class="none-work" onclick="requestMoreTimes()">None of these work — find more times</button>` : ""}
+    ${!isConfirmed && !isCancelled ? `<button id="none-work-btn" class="none-work" onclick="requestMoreTimes()"><span class="none-work-label">None of these work — find more times</span></button>` : ""}
 
     <div id="message"></div>
 
@@ -350,25 +386,78 @@ function renderMeetingPage(
       }
     }
 
+    const DEFAULT_NONE_WORK_LABEL = 'None of these work — find more times';
+
+    function setButtonLoading(btn, loading) {
+      if (!btn) return;
+      if (loading) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner" aria-hidden="true"></span><span class="none-work-label">Finding more times…</span>';
+      } else {
+        btn.disabled = false;
+        btn.innerHTML = '';
+        const label = document.createElement('span');
+        label.className = 'none-work-label';
+        label.textContent = DEFAULT_NONE_WORK_LABEL;
+        btn.appendChild(label);
+      }
+    }
+
+    function appendNewSlots(slots) {
+      const list = document.getElementById('slot-list');
+      if (!list) return;
+      for (const s of slots) {
+        const btn = document.createElement('button');
+        btn.className = 'slot-card slot-card-new';
+        btn.setAttribute('onclick', "selectSlot('" + s.id + "')");
+        const date = document.createElement('div');
+        date.className = 'slot-date';
+        date.textContent = s.date;
+        const time = document.createElement('div');
+        time.className = 'slot-time';
+        time.textContent = s.time;
+        btn.appendChild(date);
+        btn.appendChild(time);
+        list.appendChild(btn);
+        // Trigger fade-in on next frame
+        requestAnimationFrame(() => btn.classList.add('slot-card-new-in'));
+      }
+    }
+
     async function requestMoreTimes() {
       const msg = document.getElementById('message');
+      const btn = document.getElementById('none-work-btn');
+      setButtonLoading(btn, true);
+      msg.className = '';
+      msg.style.display = 'none';
       try {
         const res = await fetch('/meeting/${meeting.shortId}/more-times', { method: 'POST' });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (res.ok) {
-          msg.className = 'success';
-          msg.textContent = 'Looking for more times... Refresh in a moment.';
-          msg.style.display = 'block';
-          setTimeout(() => location.reload(), 3000);
+          if (data.reloadRequired) {
+            location.reload();
+            return;
+          }
+          if (data.count === 0 || !data.slots || data.slots.length === 0) {
+            msg.className = 'error';
+            msg.textContent = "Couldn't find any more times. The organizer has been notified.";
+            msg.style.display = 'block';
+            setButtonLoading(btn, false);
+            return;
+          }
+          appendNewSlots(data.slots);
+          setButtonLoading(btn, false);
         } else {
           msg.className = 'error';
           msg.textContent = data.error || 'Something went wrong';
           msg.style.display = 'block';
+          setButtonLoading(btn, false);
         }
       } catch (e) {
         msg.className = 'error';
         msg.textContent = 'Network error. Please try again.';
         msg.style.display = 'block';
+        setButtonLoading(btn, false);
       }
     }
   </script>
