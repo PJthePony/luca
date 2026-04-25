@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { and, eq, notInArray } from "drizzle-orm";
 import { apiAuthMiddleware } from "../middleware/api-auth.js";
-import { fetchSettingsData } from "../services/queries.js";
+import { count as dbCount } from "drizzle-orm";
+import { fetchSettingsData, fetchMeetingsData } from "../services/queries.js";
+import { meetings } from "../db/schema.js";
 import { db } from "../db/index.js";
 import {
   users,
@@ -62,6 +64,49 @@ apiRoutes.get("/settings", async (c) => {
     calendars: data.calendars,
     meetingTypes: data.types,
     availabilityRules: data.rules,
+  });
+});
+
+// ── Meetings ───────────────────────────────────────────────────────────────
+
+apiRoutes.get("/meetings", async (c) => {
+  const user = c.get("user");
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10), 100);
+  const offset = parseInt(c.req.query("offset") ?? "0", 10);
+
+  const [{ total }] = await db
+    .select({ total: dbCount() })
+    .from(meetings)
+    .where(eq(meetings.organizerId, user.id));
+
+  const data = await fetchMeetingsData(user.id, limit, offset);
+
+  return c.json({
+    total,
+    offset,
+    limit,
+    hasMore: offset + data.length < total,
+    items: data.map((d) => ({
+      id: d.meeting.id,
+      status: d.meeting.status,
+      subject: d.thread?.subject ?? null,
+      title: d.meeting.title,
+      confirmedStart: d.meeting.confirmedStart,
+      confirmedEnd: d.meeting.confirmedEnd,
+      durationMin: d.meeting.durationMin,
+      location: d.meeting.location,
+      meetingTypeName: d.meetingType?.name ?? null,
+      messageCount: d.messageCount,
+      proposedSlotCount: d.slots.length,
+      participants: d.participants.map((p) => ({
+        id: p.id,
+        email: p.email,
+        name: p.name,
+        role: p.role,
+      })),
+      createdAt: d.meeting.createdAt,
+      updatedAt: d.meeting.updatedAt,
+    })),
   });
 });
 
