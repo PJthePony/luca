@@ -10,6 +10,7 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { meetingRoutes } from "./routes/meetings.js";
 import { authRoutes } from "./routes/auth.js";
 import { apiRoutes } from "./routes/api.js";
+import { apiPublicRoutes } from "./routes/api-public.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { joinRoutes } from "./routes/join.js";
@@ -152,6 +153,7 @@ app.get("/", async (c) => {
 });
 
 app.route("/api", apiRoutes);
+app.route("/api/public", apiPublicRoutes);
 app.route("/webhooks", webhookRoutes);
 app.route("/meeting", meetingRoutes);
 app.route("/auth", authRoutes);

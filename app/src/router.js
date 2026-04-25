@@ -6,7 +6,7 @@ const routes = [
   { path: '/login', name: 'login', component: () => import('./views/LoginView.vue') },
   { path: '/dashboard', name: 'dashboard', component: () => import('./views/DashboardView.vue'), meta: { requiresAuth: true } },
   { path: '/settings', name: 'settings', component: () => import('./views/SettingsView.vue'), meta: { requiresAuth: true } },
-  { path: '/approval/:id', name: 'approval', component: () => import('./views/ApprovalView.vue'), meta: { requiresAuth: true } },
+  { path: '/review/:shortCode', name: 'approval', component: () => import('./views/ApprovalView.vue') },
   { path: '/simulator', name: 'simulator', component: () => import('./views/SimulatorView.vue'), meta: { requiresAuth: true } },
 ];
 
