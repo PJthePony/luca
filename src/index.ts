@@ -56,6 +56,26 @@ app.get("/", async (c) => {
   <style>
     ${baseStyles}
 
+    /* baseStyles defines color ramps but not semantic aliases — alias here. */
+    :root {
+      --bg: var(--sage-200);
+      --bg-card: var(--sage-50);
+      --bg-elevated: var(--sage-100);
+      --text: var(--navy-600);
+      --text-muted: var(--navy-400);
+      --accent: var(--fuchsia-600);
+      --accent-hover: var(--fuchsia-800);
+      --border: rgba(11, 20, 30, 0.08);
+      --border-strong: rgba(11, 20, 30, 0.16);
+      --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+      --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-9: 96px;
+      --radius-sm: 4px; --radius-md: 6px; --radius-lg: 10px; --radius-pill: 999px;
+      --step-1: clamp(1.0625rem, 1rem + 0.3vw, 1.15rem);
+      --step-2: clamp(1.25rem, 1.15rem + 0.5vw, 1.5rem);
+      --step-5: clamp(2.75rem, 2rem + 3.5vw, 4.5rem);
+    }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans); margin: 0; }
+
     .page { min-height: 100dvh; background: var(--bg); display: flex; flex-direction: column; }
     .bar { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; background: var(--bg); backdrop-filter: saturate(140%) blur(8px); }
     .brand { display: flex; align-items: center; gap: var(--space-3); text-decoration: none; color: var(--text); }
