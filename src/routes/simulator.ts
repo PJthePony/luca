@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { meetings, emailThreads, emailMessages, participants, users, meetingTypes, availabilityRules } from "../db/schema.js";
@@ -13,6 +14,21 @@ import { env } from "../config.js";
 import { nanoid } from "nanoid";
 
 export const simulatorRoutes = new Hono();
+
+simulatorRoutes.use(
+  "*",
+  cors({
+    origin: [
+      "https://luca.tanzillo.ai",
+      "https://family.tanzillo.ai",
+      "http://localhost:5181",
+      "http://localhost:5180",
+    ],
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  }),
+);
 
 // ── Simulator Page ──────────────────────────────────────────────────────────
 
