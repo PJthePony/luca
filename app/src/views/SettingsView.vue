@@ -228,7 +228,7 @@ async function deleteRule(rule) {
 <style scoped>
 .page { max-width: 760px; margin: 0 auto; padding: var(--space-7) var(--space-5) var(--space-9); }
 .header { margin-bottom: var(--space-7); }
-.title { font-family: var(--font-serif); font-style: italic; font-weight: 500; font-variation-settings: 'opsz' 72; letter-spacing: -0.018em; line-height: 1.02; font-size: var(--step-4); color: var(--accent); margin: var(--space-2) 0 var(--space-3); text-wrap: balance; }
+.title { font-family: var(--font-serif); font-weight: 600; font-variation-settings: 'opsz' 36; letter-spacing: -0.018em; line-height: 1.1; font-size: 2rem; color: var(--text); margin: var(--space-2) 0 var(--space-3); text-wrap: balance; }
 .status { color: var(--text-muted); padding: var(--space-5) 0; }
 .status.err { color: var(--danger-600); }
 

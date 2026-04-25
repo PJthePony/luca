@@ -56,7 +56,7 @@ function goToFamily() {
 .word { font-family: var(--font-serif); font-weight: 600; font-size: var(--step-1); letter-spacing: -0.01em; }
 
 .hero { max-width: 720px; margin: 0 auto; padding: var(--space-9) var(--space-5) var(--space-7); text-align: center; }
-.title { font-family: var(--font-serif); font-style: italic; font-weight: 500; font-variation-settings: 'opsz' 72; letter-spacing: -0.018em; line-height: 1.02; font-size: var(--step-5); color: var(--accent); margin: var(--space-3) 0 var(--space-5); text-wrap: balance; }
+.title { font-family: var(--font-serif); font-weight: 600; font-variation-settings: 'opsz' 36; letter-spacing: -0.018em; line-height: 1.1; font-size: 2rem; color: var(--text); margin: var(--space-3) 0 var(--space-5); text-wrap: balance; }
 .lead { margin: 0 auto var(--space-7); max-width: 52ch; }
 
 .features { max-width: 920px; margin: 0 auto; padding: 0 var(--space-5) var(--space-9); display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-6); }
