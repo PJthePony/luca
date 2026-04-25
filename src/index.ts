@@ -59,7 +59,7 @@ app.get("/", async (c) => {
     .page { min-height: 100dvh; background: var(--bg); display: flex; flex-direction: column; }
     .bar { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; background: var(--bg); backdrop-filter: saturate(140%) blur(8px); }
     .brand { display: flex; align-items: center; gap: var(--space-3); text-decoration: none; color: var(--text); }
-    .icon { width: 24px; height: 24px; border-radius: var(--radius-sm); display: block; }
+    .icon { width: 22px; height: 22px; display: block; color: var(--accent); }
     .word { font-family: var(--font-serif); font-weight: 600; font-size: var(--step-1); letter-spacing: -0.01em; }
 
     .hero { max-width: 720px; margin: 0 auto; padding: var(--space-9) var(--space-5) var(--space-7); text-align: center; }
@@ -90,7 +90,7 @@ app.get("/", async (c) => {
   <main class="page">
     <header class="bar">
       <a class="brand" href="https://family.tanzillo.ai">
-        <img class="icon" src="https://family.tanzillo.ai/apple-touch-icon.png" alt="" />
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
         <span class="word">Luca</span>
       </a>
       <a class="btn ghost" href="${FAMILY_URL}">Sign in to The Family</a>
