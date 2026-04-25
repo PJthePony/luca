@@ -15,7 +15,7 @@ export const fontLinks = `
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23142235'/%3E%3Csvg x='4' y='4' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23D4246F' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='3' y1='10' x2='21' y2='10'/%3E%3Cpath d='M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01'/%3E%3C/svg%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">`;
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">`;
 
 /** Inline SVG of the calendar icon (dark bg variant — landing/login). */
 export const logoSvgDark = `<div style="width:32px;height:32px;border-radius:8px;background:rgba(212,36,111,0.12);border:1px solid rgba(212,36,111,0.25);display:flex;align-items:center;justify-content:center;">
@@ -93,7 +93,7 @@ export const baseStyles = `
     --danger-100:  #F0CCD4;
 
     /* Typefaces */
-    --font-serif: 'Fraunces', 'Times New Roman', Georgia, serif;
+    --font-serif: 'Newsreader', 'Times New Roman', Georgia, serif;
     --font-sans:  'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
     --font-mono:  'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
