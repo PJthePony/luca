@@ -58,6 +58,9 @@ async function signOut() {
   align-items: center;
   justify-content: space-between;
   padding: 18px 24px;
+  padding-top: max(18px, env(safe-area-inset-top));
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
   background: var(--sage-100);
   border-bottom: 1px solid var(--border);
   position: sticky;
