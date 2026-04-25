@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { users, userCalendars } from "../db/schema.js";
 import { getAuthUrl, exchangeCode, listCalendars } from "../lib/google.js";
 import { verifySupabaseJwt, parseCookie } from "../lib/supabase-jwt.js";
+import { getGoogleTokensForUser } from "../lib/google-credentials.js";
 import type { GoogleTokens } from "../types/index.js";
 import { seedDefaults } from "../lib/seed-defaults.js";
 import { findRetryableMeetings } from "../services/retry.js";
@@ -76,6 +77,21 @@ authRoutes.get("/session", async (c) => {
       await db
         .update(users)
         .set({ supabaseId: payload.sub, updatedAt: new Date() })
+        .where(eq(users.id, user.id));
+      user = { ...user, supabaseId: payload.sub };
+    }
+
+    // Sync Google tokens captured by the family hub into Luca's local users
+    // table. Existing read paths keep using user.googleTokens, so this single
+    // sync at login time avoids touching 13 call sites.
+    const sharedTokens = await getGoogleTokensForUser({
+      email: user.email,
+      supabaseId: user.supabaseId,
+    });
+    if (sharedTokens?.refresh_token) {
+      await db
+        .update(users)
+        .set({ googleTokens: sharedTokens, updatedAt: new Date() })
         .where(eq(users.id, user.id));
     }
   } catch (err: any) {
