@@ -20,6 +20,7 @@ simulatorRoutes.use(
   cors({
     origin: [
       "https://luca.tanzillo.ai",
+      "https://app.luca.tanzillo.ai",
       "https://family.tanzillo.ai",
       "http://localhost:5181",
       "http://localhost:5180",
